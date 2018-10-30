@@ -23,8 +23,13 @@ pub fn tokenize(input : &str) -> Result<Vec<Token>, &'static str> {
         match state {
             TokenizerState::CommandName => {
                 if c == ' ' {
-                    result.push(Token::CommandStartToken(current_command_name));
-                    current_command_name = String::new();
+                    if current_command_name == String::new() {
+                        result.push(Token::CharToken('.'));
+                        result.push(Token::CharToken(c));
+                    } else {
+                        result.push(Token::CommandStartToken(current_command_name));
+                        current_command_name = String::new();
+                    }
                     state = TokenizerState::Text;
                 } else {
                     current_command_name.push(c);
@@ -40,6 +45,7 @@ pub fn tokenize(input : &str) -> Result<Vec<Token>, &'static str> {
                     }
                     continue;
                 }
+
                 if c == '|' {
                     if backslash_seen {
                         result.push(Token::CharToken('|'));
@@ -148,5 +154,19 @@ mod test {
 
         assert_eq!(tokens, expected);
     }
-}
 
+    #[test]
+    fn period_not_read_as_command() {
+        let input = "a. b";
+        let tokens = tokenize(input).unwrap();
+        let expected = vec![
+            Token::CharToken('a'),
+            Token::CharToken('.'),
+            Token::CharToken(' '),
+            Token::CharToken('b'),
+            Token::EOFToken,
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+}
