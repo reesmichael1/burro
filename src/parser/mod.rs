@@ -4,31 +4,41 @@ use parser::tokenizer::Token;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Node {
-    Document{ children: Vec<Node> },
-    Paragraph{ children: Vec<Node> },
+    Document( Vec<Node> ),
+    Paragraph( Vec<Node> ),
     Text(String),
-    Bold{ children: Vec<Node> },
-    Italic{ children: Vec<Node> },
+    Bold( Vec<Node> ),
+    Italic(Vec<Node> ),
 }
 
 impl Node {
     fn add_string(&mut self, s: &str) {
         match self {
             Node::Text(t) => (*t).push_str(s),
-            Node::Document{children: c} => (*c).push(Node::Text(String::from(s))),
-            Node::Paragraph{children: c} => (*c).push(Node::Text(String::from(s))),
-            Node::Bold{children: c} => (*c).push(Node::Text(String::from(s))),
-            Node::Italic{children: c} => (*c).push(Node::Text(String::from(s))),
+            Node::Document(c) => (*c).push(Node::Text(String::from(s))),
+            Node::Paragraph(c) => (*c).push(Node::Text(String::from(s))),
+            Node::Bold(c) => (*c).push(Node::Text(String::from(s))),
+            Node::Italic(c) => (*c).push(Node::Text(String::from(s))),
         }
     }
 
     fn add_child(&mut self, n: Node) {
         match self {
             Node::Text(_) => {},
-            Node::Document{children: c} => (*c).push(n),
-            Node::Paragraph{children: c} => (*c).push(n),
-            Node::Bold{children: c} => (*c).push(n),
-            Node::Italic{children: c} => (*c).push(n),
+            Node::Document(c) => (*c).push(n),
+            Node::Paragraph(c) => (*c).push(n),
+            Node::Bold(c) => (*c).push(n),
+            Node::Italic(c) => (*c).push(n),
+        }
+    }
+
+    pub fn get_children(&self) -> Vec<Node> {
+        match self {
+            Node::Text(_) => vec![],
+            Node::Document(c) => (*c).clone(),
+            Node::Paragraph(c) => (*c).clone(),
+            Node::Bold(c) => (*c).clone(),
+            Node::Italic(c) => (*c).clone(),
         }
     }
 }
@@ -56,18 +66,18 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
                             current_command = Some(c);
                         },
                         None => {
-                            let p = Node::Paragraph{ 
-                                children: vec![
+                            let p = Node::Paragraph( 
+                                vec![
                                     Node::Text(String::from(current_string))] 
-                            };
+                            );
                             current_command = Some(p);
                         }
                     }
                 }
 
                 let new_node = match name.as_ref() {
-                    "bold" => Node::Bold{children: Vec::new()},
-                    "italic" => Node::Italic{children: Vec::new()},
+                    "bold" => Node::Bold(Vec::new()),
+                    "italic" => Node::Italic(Vec::new()),
                     _ => return Err(String::from(format!("unrecognized command '{}'", name))),
                 };
 
@@ -75,7 +85,7 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
                 // If so, put it on the stack
                 // Otherwise, make a new paragraph node
                 match current_command {
-                    None => command_stack.push(Node::Paragraph{ children: vec![] }),
+                    None => command_stack.push(Node::Paragraph(vec![])),
                     Some(mut c) => {
                         command_stack.push(c);
                     },
@@ -181,7 +191,7 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
         }
     }
 
-    Ok(Node::Document{ children: result })
+    Ok(Node::Document(result))
 }
 
 #[cfg(test)]
@@ -201,15 +211,15 @@ mod test {
         ];
         let result = parse_tokens(tokens).unwrap();
 
-        let expected = Node::Document{ 
-            children: vec![
-                Node::Paragraph {
-                    children: vec![ 
-                        Node::Bold{children: vec![Node::Text(String::from("word"))]}
+        let expected = Node::Document( 
+            vec![
+                Node::Paragraph(
+                    vec![ 
+                        Node::Bold(vec![Node::Text(String::from("word"))])
                     ]
-                }
+                )
             ]
-        };
+        );
 
         assert_eq!(result, expected);
     }
@@ -230,22 +240,22 @@ mod test {
         ];
 
         let result = parse_tokens(tokens).unwrap();
-        let expected = Node::Document{ 
-            children: vec![
-                Node::Paragraph{ 
-                    children: vec![
-                        Node::Bold {
-                            children: vec![
+        let expected = Node::Document( 
+            vec![
+                Node::Paragraph( 
+                    vec![
+                        Node::Bold(
+                            vec![
                                 Node::Text(String::from("1 ")),
-                                Node::Italic {
-                                    children: vec![Node::Text(String::from("2"))],
-                                },
+                                Node::Italic(
+                                    vec![Node::Text(String::from("2"))],
+                                ),
                                 Node::Text(String::from(" 3")),
                             ],
-                        }]
-                }
+                        )]
+                )
             ]
-        };
+        );
 
         assert_eq!(result, expected);
     }
@@ -263,26 +273,25 @@ mod test {
             Token::NewlineToken,
         ];
         let result = parse_tokens(tokens).unwrap();
-        let expected = Node::Document{
-            children: vec![
-                Node::Paragraph{ 
-                    children: vec![
-                        Node::Bold {
-                            children: vec![
+        let expected = Node::Document(
+            vec![
+                Node::Paragraph( 
+                    vec![
+                        Node::Bold(
+                            vec![
                                 Node::Text(String::from("1"))],
-                        }
+                        )
                     ]
-                },
-                Node::Paragraph{ 
-                    children: vec![
-                        Node::Italic {
-                            children: vec![
-                                Node::Text(String::from("2"))],
-                        }
+                ),
+                Node::Paragraph( 
+                    vec![
+                        Node::Italic(
+                            vec![Node::Text(String::from("2"))],
+                        )
                     ]
-                },
+                ),
             ]
-        };
+        );
         assert_eq!(result, expected);
     }
 
@@ -294,17 +303,13 @@ mod test {
             Token::EOFToken,
         ];
         let result = parse_tokens(tokens).unwrap();
-        let expected = Node::Document {
-            children: vec![
-                Node::Paragraph{
-                    children: vec![
-                        Node::Bold {
-                            children: vec![Node::Text(String::from("1"))],
-                        },
-                    ]
-                }
+        let expected = Node::Document(
+            vec![
+                Node::Paragraph(
+                    vec![Node::Bold(vec![Node::Text(String::from("1"))])]
+                )
             ]
-        };
+        );
         assert_eq!(result, expected);
     }
 
@@ -318,16 +323,16 @@ mod test {
             Token::EOFToken,
         ];
         let result = parse_tokens(tokens).unwrap();
-        let expected = Node::Document{ 
-            children: vec![
-                Node::Paragraph{ 
-                    children: vec![
+        let expected = Node::Document( 
+            vec![
+                Node::Paragraph( 
+                    vec![
                         Node::Text(String::from("1")),
-                        Node::Bold{children: vec![Node::Text(String::from("2"))]},
+                        Node::Bold(vec![Node::Text(String::from("2"))]),
                     ]
-                }
+                )
             ]
-        };
+        );
         assert_eq!(result, expected);
     }
 

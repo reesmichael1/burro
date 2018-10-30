@@ -4,3 +4,5 @@ version = "0.1.0"
 authors = ["Michael Rees <reesmichael1@vivaldi.net>"]
 
 [dependencies]
+printpdf = "0.2.8"
+pdf-canvas = "0.6.0"
