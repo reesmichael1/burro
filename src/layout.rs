@@ -36,21 +36,35 @@ impl Layout {
 
     pub fn construct(&mut self, root : &Node) {
         let mut boxes = vec![];
+
         let mut top_nodes = match root {
             Node::Document(children) => children.clone(),
             _ => panic!("expected Document node"),
         };
 
-        top_nodes.reverse();  // use as a stack
+        if top_nodes.len() == 0 {
+            return;
+        }
 
-        let mut nodes_to_go = vec![];
+        // We want to treat this as a stack, but in the normal Document layout,
+        // the nodes are stored as front to back = left to right.
+        top_nodes.reverse();
+
         let mut node = top_nodes.pop().unwrap();
+        let mut nodes_to_go = top_nodes;
 
+        let side_margin = 72.0;
+        let top_margin = 72.0;
+
+        let paragraph_break = 24.0;
+
+        let mut first_paragraph = true;
         let mut font = BuiltinFont::Times_Roman;
-        let mut x = 72.0;
-        let y = self.height - 72.0;
+        let mut x = side_margin;
+        let mut y = self.height - top_margin;
 
         loop {
+            // If necessary, build a box for the currently highlighted node
             if let Node::Text(s) = node.clone() {
                 for c in s.chars() {
                     let mut ch = String::new();
@@ -69,46 +83,32 @@ impl Layout {
                 }
             } else if let Node::Bold(_) = node.clone() {
                 font = BuiltinFont::Times_Bold;
-            }
-
+            } else if let Node::Italic(_) = node.clone() {
+                font = BuiltinFont::Times_Italic;
+            } else if let Node::Paragraph(_) = node.clone() {
+                if first_paragraph {
+                    first_paragraph = false;
+                } else {
+                    x = side_margin;
+                    y -= paragraph_break;
+                }
+            } 
+            
+            // Once done processing, we need to highlight the "next" node.
+            // If the current node has children, then go to its leftmost child
+            // and add the rest of its children to the list of nodes to visit.
+            // Otherwise, go to the next child in the list of nodes to visit.
             if node.get_children().len() > 0 {
                 let mut children = node.get_children();
-                children.reverse();
                 node = children.pop().unwrap();
-                if node.get_children().len() > 0 {
-                    for child in node.get_children()[1..].iter() {
-                        nodes_to_go.push(child.clone());
-                    }
+                for child in children {
+                    nodes_to_go.push(child);
                 }
             } else {
-                if nodes_to_go.len() == 0 {
-                    break;
-                }
-                while nodes_to_go[0].get_children().len() == 0 {
-                    nodes_to_go = Vec::from(&nodes_to_go[1..]);
-                    if nodes_to_go.len() == 0 {
-                        break;
-                    }
-                }
-
-                if nodes_to_go.len() == 0 {
-                    break;
-                }
-
-                let current_children = nodes_to_go.pop().unwrap().get_children();
-                nodes_to_go = Vec::from(&nodes_to_go[1..]);
-                if current_children.len() > 0 {
-                    node = current_children[0].clone();
+                if nodes_to_go.len() > 0 {
+                    node = nodes_to_go.pop().unwrap();
                 } else {
-                    if nodes_to_go.len() == 0 {
-                        break
-                    }
-                    node = nodes_to_go[0].clone();
-                }
-                if node.get_children().len() > 0 {
-                    for child in current_children[1..].iter() {
-                        nodes_to_go.push(child.clone());
-                    }
+                    break;
                 }
             }
         }
@@ -159,9 +159,9 @@ mod test {
                     font: BuiltinFont::Times_Roman,
                     c: String::from("c"),
                 }),
-            ],
-            height: 100.0,
-            width: 100.0,
+                ],
+                height: 100.0,
+                width: 100.0,
         };
 
         let mut result = Layout::new(100.0, 100.0);
@@ -209,6 +209,47 @@ mod test {
                     font: BuiltinFont::Times_Bold,
                     c: String::from("c"),
                 }),
+            ],
+            height: 100.0,
+            width: 100.0,
+        };
+
+        let mut result = Layout::new(100.0, 100.0);
+        result.construct(&tree);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn layout_with_paragraphs() {
+        let tree = Document(
+            vec![
+                Paragraph(
+                    vec![Text(String::from("1"))]
+                ),
+                Paragraph(
+                    vec![Text(String::from("2"))]
+                ),
+            ],
+        );
+
+        let expected = Layout{
+            boxes: vec![
+                BurroBox::Char(CharBox{
+                    x: 72.0,
+                    y: 28.0,
+                    width: 6.0,
+                    height: 12.0,
+                    font: BuiltinFont::Times_Roman,
+                    c: String::from("1"),
+                }),
+                BurroBox::Char(CharBox{
+                    x: 72.0,
+                    y: 4.0,
+                    width: 6.0,
+                    height: 12.0,
+                    font: BuiltinFont::Times_Roman,
+                    c: String::from("2"),
+                })
             ],
             height: 100.0,
             width: 100.0,
