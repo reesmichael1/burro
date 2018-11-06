@@ -81,6 +81,7 @@ pub fn tokenize(input : &str) -> Result<Vec<Token>, &'static str> {
     }
 
     result.push(Token::EOFToken);
+    debug!("parsed document into {} tokens", result.len());
     Ok(result)
 }
 

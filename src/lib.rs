@@ -4,6 +4,8 @@ use std::path::{Path, PathBuf};
 use std::ffi::OsStr;
 
 extern crate pdf_canvas;
+#[macro_use]
+extern crate log;
 
 pub mod parser;
 pub mod writer;
@@ -29,8 +31,10 @@ impl Config {
 pub fn run(config: Config) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(&config.filename)?;
     let tree = parser::parse(&contents)?;
-    
-    writer::write_document(tree, &extract_path(&config.filename)?);
+
+    let new_path = extract_path(&config.filename)?;
+    writer::write_document(tree, &new_path);
+    info!("wrote to {}", new_path);
     Ok(())
 }
 

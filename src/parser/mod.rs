@@ -193,6 +193,7 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
         }
     }
 
+    debug!("successfully parsed document into tree");
     Ok(Node::Document(result))
 }
 
