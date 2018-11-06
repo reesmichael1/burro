@@ -15,7 +15,7 @@ pub fn write_document(root: parser::Node, path: &str) {
     layout.construct(&root);
 
     let mut document = Pdf::create(path)
-        .expect("Create pdf file");
+        .expect("could not create PDF file");
 
     document.render_page(612.0, 792.0, |canvas| {
         for b in layout.boxes {
@@ -34,7 +34,7 @@ pub fn write_document(root: parser::Node, path: &str) {
         };
 
         Ok(())
-    }).expect("Write page");
+    }).expect("could not write page");
 
-    document.finish().expect("saved document");
+    document.finish().expect("could not save document");
 }

@@ -136,7 +136,8 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
                                 c.add_string(&current_string);
                                 current_command = Some(c);
                             },
-                            None => result.push(Node::Text(String::from(current_string))),
+                            None => result.push(
+                                Node::Paragraph(vec![Node::Text(String::from(current_string))])),
                         }
                         current_string = String::new();
                     }
@@ -153,7 +154,7 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
                     }
                     match current_command {
                         Some(root) => result.push(root),
-                        None => return Err(String::from("lost track of root node")),
+                        None => {},
                     }
                     current_command = None;
                     newline_seen = false;
@@ -166,7 +167,8 @@ fn parse_tokens(tokens: Vec<Token>) -> Result<Node, String> {
                             c.add_string(&current_string);
                             current_command = Some(c);
                         },
-                        None => result.push(Node::Text(String::from(current_string))),
+                        None => result.push(
+                            Node::Paragraph(vec![Node::Text(String::from(current_string))])),
                     }
                     current_string = String::new();
                 }
@@ -333,6 +335,35 @@ mod test {
                 )
             ]
         );
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn non_command_paragraph_start() {
+        let tokens = vec![
+            Token::CharToken('1'),
+            Token::NewlineToken,
+            Token::NewlineToken,
+            Token::CharToken('2'),
+            Token::EOFToken,
+        ];
+
+        let result = parse_tokens(tokens).unwrap();
+        let expected = Node::Document(
+            vec![
+                Node::Paragraph(
+                    vec![
+                        Node::Text(String::from("1")),
+                    ],
+                ),
+                Node::Paragraph(
+                    vec![
+                        Node::Text(String::from("2")),
+                    ],
+                ),
+            ],
+        );
+
         assert_eq!(result, expected);
     }
 
