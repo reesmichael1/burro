@@ -35,7 +35,7 @@ impl LayoutConstructor {
         let children = node.get_children();
         if children.len() == 0 {
             // process current box
-            if let Node::Text(s) = node.clone() {
+            if let Node::Text(s) = node {
                 for c in s.chars() {
                     let ch = c.to_string();
                     let font = get_current_font(&self.styles);
@@ -73,7 +73,7 @@ impl LayoutConstructor {
                         styles: vec![Style::Font(FontStyle::new(font, 12.0))],
                         x: self.x,
                         y: self.y,
-                        c: ch.clone(),
+                        c: ch,
                         height: config.font_height,
                         width,
                     };
