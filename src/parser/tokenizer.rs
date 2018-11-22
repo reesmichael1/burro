@@ -31,6 +31,16 @@ pub fn tokenize(input : &str) -> Result<Vec<Token>, &'static str> {
                         current_command_name = String::new();
                     }
                     state = TokenizerState::Text;
+                } else if c == '|' {
+                    if current_command_name == String::new() {
+                        result.push(Token::CharToken('.'));
+                        result.push(Token::CommandEndToken);
+                    } else {
+                        result.push(Token::CommandStartToken(current_command_name));
+                        result.push(Token::CommandEndToken);
+                        current_command_name = String::new();
+                    }
+                    state = TokenizerState::Text;
                 } else if c == '\n' {
                     if current_command_name == String::new() {
                         result.push(Token::CharToken('.'));
@@ -191,6 +201,21 @@ mod test {
             Token::NewlineToken,
             Token::CharToken('a'),
             Token::CharToken(' '),
+            Token::CharToken('b'),
+            Token::EOFToken,
+        ];
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn command_end_after_period_recognized() {
+        let input = "a.|b";
+        let tokens = tokenize(input).unwrap();
+        let expected = vec![
+            Token::CharToken('a'),
+            Token::CharToken('.'),
+            Token::CommandEndToken,
             Token::CharToken('b'),
             Token::EOFToken,
         ];
