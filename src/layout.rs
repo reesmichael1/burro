@@ -10,27 +10,188 @@ pub struct Layout {
     pub height: f32,
 }
 
+struct LayoutConstructor {
+    x: f32,
+    y: f32,
+    boxes: Vec<BurroBox>,
+    styles: Vec<Style>,
+    current_line: Vec<BurroBox>,
+    first_paragraph: bool,
+}
+
+impl LayoutConstructor {
+    pub fn new(config : &LayoutConfig) -> LayoutConstructor {
+        LayoutConstructor {
+            x: config.left_margin,
+            y: config.height - config.top_margin,
+            boxes: vec![],
+            styles: vec![],
+            current_line: vec![],
+            first_paragraph: true,
+        }
+    }
+
+    fn construct_boxes_for_tree(&mut self, node : &Node, config : &LayoutConfig) {
+        let children = node.get_children();
+        if children.len() == 0 {
+            // process current box
+            if let Node::Text(s) = node.clone() {
+                for c in s.chars() {
+                    let ch = c.to_string();
+                    let font = get_current_font(&self.styles);
+                    let width = font.get_width(config.font_height, &ch);
+                    if self.x + width > config.width - config.right_margin {
+                        let last_space_ix_from_back = self.current_line.iter().rev()
+                            .position(|&ref b : &BurroBox| {
+                                match b {
+                                    BurroBox::Char(cb) => cb.c == String::from(" "),
+                                }
+                            }).expect("word is longer than width of page");
+                        let last_space_ix = self.current_line.len() - last_space_ix_from_back - 1;
+                        let new_line = self.current_line.split_off(last_space_ix + 1);
+                        self.boxes.append(&mut self.current_line);
+                        self.x = config.left_margin;
+                        self.y -= config.leading + config.font_height;
+                        for b in new_line {
+                            match b {
+                                BurroBox::Char(cb) => {
+                                    let b = CharBox {
+                                        styles: cb.styles,
+                                        x: self.x,
+                                        y: self.y,
+                                        c: cb.c,
+                                        height: cb.height,
+                                        width: cb.width,
+                                    };
+                                    self.current_line.push(BurroBox::Char(b));
+                                    self.x += cb.width;
+                                }
+                            }
+                        }
+                    } 
+                    let b = CharBox {
+                        styles: vec![Style::Font(FontStyle::new(font, 12.0))],
+                        x: self.x,
+                        y: self.y,
+                        c: ch.clone(),
+                        height: config.font_height,
+                        width,
+                    };
+
+                    self.current_line.push(BurroBox::Char(b));
+                    self.x += width;
+                }
+                self.boxes.append(&mut self.current_line);
+            }
+        } else {
+            let mut style_added = false;
+
+            match node {
+                Node::Bold(_) => {
+                    self.styles.push(
+                        Style::Font(
+                            FontStyle::new(BuiltinFont::Times_Bold, config.font_height)));
+                    style_added = true;
+                },
+                Node::Italic(_) => {
+                    self.styles.push(
+                        Style::Font(
+                            FontStyle::new(BuiltinFont::Times_Italic, config.font_height)));
+                    style_added = true;
+                },
+                Node::Paragraph(_) => {
+                    if self.first_paragraph {
+                        self.first_paragraph = false;
+                    } else {
+                        self.boxes.append(&mut self.current_line);
+                        self.x = config.left_margin;
+                        self.y -= config.paragraph_break;
+                    }
+                }
+                _ => {},
+            }
+
+            for child in node.get_children() {
+                self.construct_boxes_for_tree(&child, config);
+            }
+
+            if style_added {
+                self.styles.pop();
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct CharBox {
     pub x: f32,
     pub y: f32,
     pub width: f32,
     pub height: f32,
-    pub font: BuiltinFont,
+    pub styles: Vec<Style>,
     pub c: String,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct FontStyle {
+    pub font: BuiltinFont,
+    pub point_size: f32,
+}
+
+impl FontStyle {
+    pub fn new(font: BuiltinFont, point_size: f32) -> FontStyle {
+        FontStyle{
+            font,
+            point_size
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Style {
+    Font(FontStyle),
+}
+
 pub struct LayoutConfig {
+    pub height: f32,
+    pub width: f32,
     pub left_margin: f32,
     pub top_margin: f32,
     pub right_margin: f32,
     pub bottom_margin: f32,
     pub leading: f32,
+    pub font_height: f32,
+    pub paragraph_break: f32,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum BurroBox {
     Char(CharBox),
+}
+
+fn get_current_font(styles : &Vec<Style>) -> BuiltinFont {
+    let fonts = styles.into_iter().map(|fs| {
+        match fs {
+            Style::Font(style) => style.font,
+        }
+    }).collect::<Vec<BuiltinFont>>();
+
+    let mut result = 0b0;
+
+    for font in fonts {
+        result = match font {
+            BuiltinFont::Times_Bold => result | 0b1,
+            BuiltinFont::Times_Italic => result | 0b10,
+            _ => result | 0b0,
+        }
+    }
+
+    match result {
+        0b1 => BuiltinFont::Times_Bold,
+        0b10 => BuiltinFont::Times_Italic,
+        0b11 => BuiltinFont::Times_BoldItalic,
+        _ => BuiltinFont::Times_Roman,
+    }
 }
 
 impl Layout {
@@ -43,128 +204,22 @@ impl Layout {
     }
 
     pub fn construct(&mut self, root : &Node) {
-        let mut boxes = vec![];
-        let mut current_line = vec![];
-
-        let mut top_nodes = match root {
-            Node::Document(children) => children.clone(),
-            _ => panic!("expected Document node"),
+        let config = LayoutConfig {
+            height: self.height,
+            width: self.width,
+            left_margin: 72.0,
+            right_margin: 72.0,
+            top_margin: 72.0,
+            bottom_margin: 72.0,
+            leading: 2.0,
+            paragraph_break: 24.0,
+            font_height: 12.0,
         };
-
-        if top_nodes.len() == 0 {
-            return;
-        }
-
-        // We want to treat this as a stack, but in the normal Document layout,
-        // the nodes are stored as front to back = left to right.
-        top_nodes.reverse();
-
-        let mut node = top_nodes.pop().unwrap();
-        let mut nodes_to_go = top_nodes;
-
-        // TODO: extract this into user-specified config
-        let left_margin = 72.0;
-        let right_margin = 72.0;
-        let top_margin = 72.0;
-        let paragraph_break = 24.0;
-        let leading = 2.0;
-        let font_height = 12.0;
-
-        let mut first_paragraph = true;
-        let mut font = BuiltinFont::Times_Roman;
-        let mut x = left_margin;
-        let mut y = self.height - top_margin;
-
-        loop {
-            // If necessary, build a box for the currently highlighted node
-            if let Node::Text(s) = node.clone() {
-                for c in s.chars() {
-                    let ch = c.to_string();
-                    let width = font.get_width(12.0, &ch);
-                    if x + width > self.width - right_margin {
-                        let last_space_ix_from_back = current_line.iter().rev()
-                            .position(|&ref b : &BurroBox| {
-                                match b {
-                                    BurroBox::Char(cb) => cb.c == String::from(" "),
-                                }
-                            }).expect("word is longer than width of page");
-                        let last_space_ix = current_line.len() - last_space_ix_from_back - 1;
-                        let new_line = current_line.split_off(last_space_ix + 1);
-                        boxes.append(&mut current_line);
-                        x = left_margin;
-                        y -= leading + font_height;
-                        for b in new_line {
-                            match b {
-                                BurroBox::Char(cb) => {
-                                    let b = CharBox {
-                                        font: cb.font,
-                                        x,
-                                        y,
-                                        c: cb.c,
-                                        height: cb.height,
-                                        width: cb.width,
-                                    };
-                                    current_line.push(BurroBox::Char(b));
-                                    x += cb.width;
-                                }
-                            }
-                        }
-                    } 
-                    let b = CharBox {
-                        font: font,
-                        x,
-                        y,
-                        c: ch.clone(),
-                        height: font_height,
-                        width,
-                    };
-
-                    current_line.push(BurroBox::Char(b));
-                    x += width;
-                }
-            } else if let Node::Bold(_) = node.clone() { 
-                // This won't work properly, need to keep track of what fonts are in play
-                // and when to switch back to Roman
-                font = BuiltinFont::Times_Bold;
-            } else if let Node::Italic(_) = node.clone() {
-                font = BuiltinFont::Times_Italic;
-            } else if let Node::Paragraph(_) = node.clone() {
-                if first_paragraph {
-                    first_paragraph = false;
-                } else {
-                    boxes.append(&mut current_line);
-                    x = left_margin;
-                    y -= paragraph_break;
-                }
-            } 
-            
-            // Once done processing, we need to highlight the "next" node.
-            // If the current node has children, then go to its leftmost child
-            // and add the rest of its children to the list of nodes to visit.
-            // Otherwise, go to the next child in the list of nodes to visit.
-            if node.get_children().len() > 0 {
-                let mut children = node.get_children();
-                node = children.pop().unwrap();
-                for child in children {
-                    nodes_to_go.push(child);
-                }
-            } else {
-                if nodes_to_go.len() > 0 {
-                    node = nodes_to_go.pop().unwrap();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        if current_line.len() > 0 {
-            boxes.append(&mut current_line);
-        }
-
-        self.boxes = boxes;
+        let mut constructor = LayoutConstructor::new(&config);
+        constructor.construct_boxes_for_tree(root, &config);
+        self.boxes = constructor.boxes;
     }
 }
-
 
 #[cfg(test)]
 mod test {
@@ -188,7 +243,10 @@ mod test {
                     y: 428.0,
                     width: 5.328,
                     height: 12.0,
-                    font: BuiltinFont::Times_Roman,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Roman,
+                        point_size: 12.0,
+                    })],
                     c: String::from("a"),
                 }),
                 BurroBox::Char(CharBox{
@@ -196,7 +254,10 @@ mod test {
                     y: 428.0,
                     width: 6.0,
                     height: 12.0,
-                    font: BuiltinFont::Times_Roman,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Roman,
+                        point_size: 12.0,
+                    })],
                     c: String::from("b"),
                 }),
                 BurroBox::Char(CharBox{
@@ -204,7 +265,10 @@ mod test {
                     y: 428.0,
                     width: 5.328,
                     height: 12.0,
-                    font: BuiltinFont::Times_Roman,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Roman,
+                        point_size: 12.0,
+                    })],
                     c: String::from("c"),
                 }),
                 ],
@@ -238,7 +302,10 @@ mod test {
                     y: 428.0,
                     width: 6.0,
                     height: 12.0,
-                    font: BuiltinFont::Times_Bold,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Bold,
+                        point_size: 12.0,
+                    })],
                     c: String::from("a"),
                 }),
                 BurroBox::Char(CharBox{
@@ -246,7 +313,10 @@ mod test {
                     y: 428.0,
                     width: 6.672,
                     height: 12.0,
-                    font: BuiltinFont::Times_Bold,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Bold,
+                        point_size: 12.0,
+                    })],
                     c: String::from("b"),
                 }),
                 BurroBox::Char(CharBox{
@@ -254,7 +324,10 @@ mod test {
                     y: 428.0,
                     width: 5.328,
                     height: 12.0,
-                    font: BuiltinFont::Times_Bold,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Bold,
+                        point_size: 12.0,
+                    })],
                     c: String::from("c"),
                 }),
             ],
@@ -287,7 +360,10 @@ mod test {
                     y: 428.0,
                     width: 6.0,
                     height: 12.0,
-                    font: BuiltinFont::Times_Roman,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Roman,
+                        point_size: 12.0,
+                    })],
                     c: String::from("1"),
                 }),
                 BurroBox::Char(CharBox{
@@ -295,7 +371,10 @@ mod test {
                     y: 404.0,
                     width: 6.0,
                     height: 12.0,
-                    font: BuiltinFont::Times_Roman,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Roman,
+                        point_size: 12.0,
+                    })],
                     c: String::from("2"),
                 })
             ],
@@ -306,5 +385,101 @@ mod test {
         let mut result = Layout::new(500.0, 500.0);
         result.construct(&tree);
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn layout_with_nested_fonts() {
+        let tree = Document(
+            vec![
+                Paragraph(
+                    vec![
+                        Bold(
+                            vec![
+                                Text(String::from("a")),
+                                Italic(
+                                    vec![Text(String::from("b"))],
+                                ),
+                            ],
+                        ),
+                        Text(String::from("c")),
+                    ]
+                ),
+            ],
+        );
+
+        let expected = Layout{
+            boxes: vec![
+                BurroBox::Char(CharBox{
+                    x: 72.0,
+                    y: 428.0,
+                    width: 6.0,
+                    height: 12.0,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Bold,
+                        point_size: 12.0,
+                    })],
+                    c: String::from("a"),
+                }),
+                BurroBox::Char(CharBox{
+                    x: 78.0,
+                    y: 428.0,
+                    width: 6.0,
+                    height: 12.0,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_BoldItalic,
+                        point_size: 12.0,
+                    })],
+                    c: String::from("b"),
+                }),
+                BurroBox::Char(CharBox{
+                    x: 84.0,
+                    y: 428.0,
+                    width: 5.328,
+                    height: 12.0,
+                    styles: vec![Style::Font(FontStyle{
+                        font: BuiltinFont::Times_Roman,
+                        point_size: 12.0,
+                    })],
+                    c: String::from("c"),
+                }),
+            ],
+            height: 500.0,
+            width: 500.0,
+        };
+
+        let mut result = Layout::new(500.0, 500.0);
+        result.construct(&tree);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn get_current_font_empty_styles() {
+        assert_eq!(get_current_font(&vec![]), BuiltinFont::Times_Roman);
+    }
+
+    #[test]
+    fn get_current_font_one_style() {
+        let styles = vec![
+            Style::Font(FontStyle{
+                font: BuiltinFont::Times_Bold,
+                point_size: 12.0,
+            }),
+        ];
+        assert_eq!(get_current_font(&styles), BuiltinFont::Times_Bold);
+    }
+
+    #[test]
+    fn get_current_font_two_styles() {
+        let styles = vec![
+            Style::Font(FontStyle{
+                font: BuiltinFont::Times_Bold,
+                point_size: 12.0,
+            }),
+            Style::Font(FontStyle{
+                font: BuiltinFont::Times_Italic,
+                point_size: 12.0,
+            }),
+        ];
+        assert_eq!(get_current_font(&styles), BuiltinFont::Times_BoldItalic);
     }
 }

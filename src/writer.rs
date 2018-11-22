@@ -1,8 +1,7 @@
-use pdf_canvas::Pdf;
+use pdf_canvas::{Pdf, BuiltinFont};
 
 use parser;
-use layout::Layout;
-use layout::BurroBox;
+use layout::{Layout, BurroBox, Style};
 
 pub fn write_document(root: parser::Node, path: &str) {
     match root {
@@ -21,10 +20,18 @@ pub fn write_document(root: parser::Node, path: &str) {
         for b in layout.boxes {
             match b {
                 BurroBox::Char(cb) => {
-                    let font = canvas.get_font(cb.font);
+                    let mut font = canvas.get_font(BuiltinFont::Times_Roman);
+                    let mut height = cb.height;
+                    for style in &cb.styles {
+                        match style {
+                            Style::Font(fs) => {
+                                font = canvas.get_font(fs.font);
+                                height = fs.point_size;
+                            },
+                        }
+                    }
                     canvas.text(|t| {
-                        t.set_font(&font, cb.height)?;
-                        t.set_leading(18.0)?;
+                        t.set_font(&font, height)?;
                         t.pos(cb.x, cb.y)?;
                         t.show(&cb.c)?;
                         Ok(())
