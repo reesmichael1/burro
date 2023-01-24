@@ -1,9 +1,18 @@
 [package]
 name = "burro"
 version = "0.1.0"
-authors = ["Michael Rees <reesmichael1@vivaldi.net>"]
+authors = ["Michael Rees <mrees@noeontheend.com>"]
+edition = "2021"
 
 [dependencies]
-pdf-canvas = "^0.6"
-simplelog = "^0.5"
-log = "^0.4"
+anyhow = "1.0"
+gumdrop = "0.8.1"
+log = "0.4"
+rustybuzz = "0.6.0"
+printpdf = "0.5.2"
+simplelog = "0.5"
+thiserror = "1.0.38"
+unicode-segmentation = "1.9.0"
+toml = "0.6.0"
+serde = { version = "1.0.152", features = ["derive"] }
+bitflags = "1.3.2"

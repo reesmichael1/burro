@@ -1,485 +1,380 @@
-use pdf_canvas::BuiltinFont;
-use pdf_canvas::FontSource;
+use std::collections::HashMap;
 
-use parser::Node;
+use crate::error::BurroError;
+use crate::fontmap::FontMap;
+use crate::fonts::Font;
+use crate::parser;
+use crate::parser::{Command, Document, Node, StyleBlock};
+use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
+use rustybuzz::{ttf_parser, Face};
 
 #[derive(Debug, PartialEq)]
 pub struct Layout {
+    pub pages: Vec<Page>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Page {
     pub boxes: Vec<BurroBox>,
-    pub width: f32,
-    pub height: f32,
+    pub height: f64,
+    pub width: f64,
 }
 
-struct LayoutConstructor {
-    x: f32,
-    y: f32,
-    boxes: Vec<BurroBox>,
-    styles: Vec<Style>,
-    current_line: Vec<BurroBox>,
-    first_paragraph: bool,
-}
-
-impl LayoutConstructor {
-    pub fn new(config : &LayoutConfig) -> LayoutConstructor {
-        LayoutConstructor {
-            x: config.left_margin,
-            y: config.height - config.top_margin,
+impl Page {
+    fn new() -> Self {
+        Self {
             boxes: vec![],
-            styles: vec![],
-            current_line: vec![],
-            first_paragraph: true,
+            height: 11. * 72.,
+            width: 8.5 * 72.,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum BurroBox {
+    Glyph {
+        pos: Position,
+        id: u32,
+        font: u32,
+        pts: f64,
+    },
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Position {
+    pub x: f64,
+    pub y: f64,
+}
+
+enum Alignment {
+    Left,
+    Right,
+    Center,
+    Justify,
+}
+
+// #[allow(dead_code)]
+// #[derive(Eq, Hash, PartialEq)]
+// enum Font {
+//     Bold,
+//     Italic,
+//     Roman,
+// }
+
+struct Word<'a> {
+    char_boxes: Vec<GlyphPosition>,
+    char_infos: Vec<GlyphInfo>,
+    pt_size: f64,
+    face: &'a Face<'a>,
+}
+
+impl<'a> Word<'a> {
+    fn new(word: &'a str, face: &'a Face, pt_size: f64) -> Self {
+        let mut in_buf = UnicodeBuffer::new();
+        in_buf.push_str(word);
+        let out_buf = shape(&face, &vec![], in_buf);
+        let info = out_buf.glyph_infos();
+        let positions = out_buf.glyph_positions();
+
+        Self {
+            char_boxes: positions.to_vec(),
+            char_infos: info.to_vec(),
+            pt_size,
+            face,
         }
     }
 
-    fn construct_boxes_for_tree(&mut self, node : &Node, config : &LayoutConfig) {
-        let children = node.get_children();
-        if children.len() == 0 {
-            // process current box
-            if let Node::Text(s) = node {
-                for c in s.chars() {
-                    let ch = c.to_string();
-                    let font = get_current_font(&self.styles);
-                    let width = font.get_width(config.font_height, &ch);
-                    if self.x + width > config.width - config.right_margin {
-                        let last_space_ix_from_back = self.current_line.iter().rev()
-                            .position(|&ref b : &BurroBox| {
-                                match b {
-                                    BurroBox::Char(cb) => cb.c == String::from(" "),
-                                }
-                            }).expect("word is longer than width of page");
-                        let last_space_ix = self.current_line.len() - last_space_ix_from_back - 1;
-                        let new_line = self.current_line.split_off(last_space_ix + 1);
-                        self.boxes.append(&mut self.current_line);
-                        self.x = config.left_margin;
-                        self.y -= config.leading + config.font_height;
-                        for b in new_line {
-                            match b {
-                                BurroBox::Char(cb) => {
-                                    let b = CharBox {
-                                        styles: cb.styles,
-                                        x: self.x,
-                                        y: self.y,
-                                        c: cb.c,
-                                        height: cb.height,
-                                        width: cb.width,
-                                    };
-                                    self.current_line.push(BurroBox::Char(b));
-                                    self.x += cb.width;
-                                }
-                            }
-                        }
-                    } 
-                    let b = CharBox {
-                        styles: vec![Style::Font(FontStyle::new(font, 12.0))],
-                        x: self.x,
-                        y: self.y,
-                        c: ch,
-                        height: config.font_height,
-                        width,
-                    };
+    fn width(&self) -> f64 {
+        font_units_to_points(
+            self.char_boxes.iter().map(|c| c.x_advance).sum(),
+            self.face,
+            self.pt_size,
+        )
+    }
+}
 
-                    self.current_line.push(BurroBox::Char(b));
-                    self.x += width;
-                }
-                self.boxes.append(&mut self.current_line);
-            }
-        } else {
-            let mut style_added = false;
+// All values are in points.
+#[allow(dead_code)]
+struct BurroParams {
+    margin_top: f64,
+    margin_bottom: f64,
+    margin_left: f64,
+    margin_right: f64,
+    alignment: Alignment,
+    leading: f64,
+    pt_size: f64,
+    page_width: f64,
+    space_width: f64,
+    page_height: f64,
+    line_height: f64,
+    font_family: String,
+}
 
+struct Point2D {
+    x: f64,
+    y: f64,
+}
+
+pub struct LayoutBuilder<'a> {
+    params: BurroParams,
+    cursor: Point2D,
+    pages: Vec<Page>,
+    font: Font,
+    font_data: HashMap<Font, Vec<u8>>,
+    font_map: &'a FontMap,
+}
+
+impl<'a> LayoutBuilder<'a> {
+    pub fn new(font_map: &'a FontMap) -> Result<Self, BurroError> {
+        let inch = 72.0;
+        let pt_size = 12.0;
+        let params = BurroParams {
+            margin_top: inch,
+            margin_left: inch,
+            margin_right: inch,
+            margin_bottom: inch,
+            pt_size,
+            line_height: 1.25 * pt_size,
+            leading: 2.0,
+            alignment: Alignment::Justify,
+            page_width: inch * 8.5,
+            page_height: inch * 11.0,
+            space_width: pt_size / 4.,
+            font_family: String::from("default"),
+        };
+
+        let default = &font_map.families["default"];
+
+        // TODO: only load fonts that are defined in the map
+        let font_data = HashMap::from([
+            (Font::ROMAN, std::fs::read(default.roman.as_ref().unwrap())?),
+            (
+                Font::ITALIC,
+                std::fs::read(default.italic.as_ref().unwrap())?,
+            ),
+            (Font::BOLD, std::fs::read(default.bold.as_ref().unwrap())?),
+            (
+                Font::BOLD_ITALIC,
+                std::fs::read(default.bold_italic.as_ref().unwrap())?,
+            ),
+        ]);
+
+        Ok(Self {
+            // Initialize the cursor at the document's top left corner.
+            cursor: Point2D {
+                x: params.margin_left,
+                y: params.page_height - (params.margin_top + params.pt_size + params.leading),
+            },
+            params,
+            pages: vec![Page::new()],
+            font: Font::ROMAN,
+            font_data,
+            font_map,
+        })
+    }
+
+    pub fn build(mut self, doc: &Document) -> Layout {
+        for node in &doc.nodes {
             match node {
-                Node::Bold(_) => {
-                    self.styles.push(
-                        Style::Font(
-                            FontStyle::new(BuiltinFont::Times_Bold, config.font_height)));
-                    style_added = true;
+                Node::Command(c) => match c {
+                    Command::Align(dir) => match dir {
+                        parser::Alignment::Left => self.params.alignment = Alignment::Left,
+                        parser::Alignment::Right => self.params.alignment = Alignment::Right,
+                        parser::Alignment::Center => self.params.alignment = Alignment::Center,
+                        parser::Alignment::Justify => self.params.alignment = Alignment::Justify,
+                    },
                 },
-                Node::Italic(_) => {
-                    self.styles.push(
-                        Style::Font(
-                            FontStyle::new(BuiltinFont::Times_Italic, config.font_height)));
-                    style_added = true;
-                },
-                Node::Paragraph(_) => {
-                    if self.first_paragraph {
-                        self.first_paragraph = false;
+                Node::Paragraph(p) => self.handle_paragraph(p),
+            }
+        }
+
+        Layout { pages: self.pages }
+    }
+
+    fn handle_paragraph(&mut self, paragraph: &[StyleBlock]) {
+        self.cursor.x = self.params.margin_left;
+
+        self.handle_style_blocks(paragraph);
+        self.cursor.x = self.params.margin_left;
+        self.cursor.y -= self.params.leading + self.params.pt_size + self.params.line_height;
+    }
+
+    fn handle_style_blocks(&mut self, blocks: &[StyleBlock]) {
+        for block in blocks {
+            match block {
+                StyleBlock::Text(words) => {
+                    // Iterate over the words and get rustybuzz's shaping of each word.
+                    // Once we know the width of each word, we can determine if
+                    // we need to add a line break or not.
+                    //
+                    // Then, once we know where the lines are,
+                    // we can continue by adding a box for each glyph position.
+                    let font_data = &(self.font_data[&self.font].clone());
+                    let raw_face = ttf_parser::Face::parse(font_data, 0).unwrap();
+                    let face = rustybuzz::Face::from_face(raw_face).unwrap();
+
+                    let mut page = self.pages.pop().unwrap();
+                    let mut current_line: Vec<Word> = vec![];
+
+                    for word in words {
+                        current_line.push(Word::new(word, &face, self.params.pt_size));
+                        if self.total_line_width(&current_line)
+                            > self.params.page_width - self.cursor.x - self.params.margin_right
+                        {
+                            let last_word = current_line.pop().unwrap();
+
+                            self.emit_line(current_line, &mut page, &face, false);
+
+                            self.cursor.x = self.params.margin_left;
+                            self.cursor.y -= self.params.leading + self.params.pt_size;
+
+                            current_line = vec![last_word];
+                        }
+                    }
+
+                    self.emit_line(current_line, &mut page, &face, true);
+
+                    self.pages.push(page);
+                }
+                StyleBlock::Bold(blocks) => {
+                    self.font = self.font | Font::BOLD;
+                    self.handle_style_blocks(blocks);
+                    self.font = self.font - Font::BOLD;
+                }
+                StyleBlock::Italic(blocks) => {
+                    self.font = self.font | Font::ITALIC;
+                    self.handle_style_blocks(blocks);
+                    self.font = self.font - Font::ITALIC;
+                }
+            }
+        }
+    }
+
+    fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, face: &Face, last: bool) {
+        match self.params.alignment {
+            // Everything in this assumes that we're emitting text from left to right,
+            // so we'll need to rework this to support other scripts.
+            Alignment::Left => {
+                for word in line {
+                    for (ix, glyph) in word.char_infos.iter().enumerate() {
+                        let pos = word.char_boxes[ix];
+
+                        page.boxes.push(BurroBox::Glyph {
+                            pos: Position {
+                                x: self.cursor.x,
+                                y: self.cursor.y,
+                            },
+                            id: glyph.glyph_id,
+                            font: self
+                                .font_map
+                                .font_id(&self.params.font_family, self.font.font_num()),
+                            pts: self.params.pt_size,
+                        });
+
+                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
+                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    }
+                    self.cursor.x += self.params.space_width;
+                }
+            }
+            Alignment::Justify => {
+                let total_width = self.total_line_width(&line);
+                let available = self.params.page_width - self.params.margin_right - self.cursor.x;
+                let space_width =
+                    self.params.space_width + (available - total_width) / line.len() as f64;
+                for word in line {
+                    for (ix, glyph) in word.char_infos.iter().enumerate() {
+                        let pos = word.char_boxes[ix];
+
+                        page.boxes.push(BurroBox::Glyph {
+                            pos: Position {
+                                x: self.cursor.x,
+                                y: self.cursor.y,
+                            },
+                            id: glyph.glyph_id,
+                            font: self
+                                .font_map
+                                .font_id(&self.params.font_family, self.font.font_num()),
+                            pts: self.params.pt_size,
+                        });
+
+                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
+                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    }
+                    if last {
+                        self.cursor.x += self.params.space_width;
                     } else {
-                        self.boxes.append(&mut self.current_line);
-                        self.x = config.left_margin;
-                        self.y -= config.paragraph_break;
+                        self.cursor.x += space_width;
                     }
                 }
-                _ => {},
             }
+            Alignment::Right => {
+                let total_width = self.total_line_width(&line);
+                let available = self.params.page_width - self.params.margin_right - self.cursor.x;
+                self.cursor.x = self.params.margin_left + available - total_width;
+                for word in line {
+                    for (ix, glyph) in word.char_infos.iter().enumerate() {
+                        let pos = word.char_boxes[ix];
 
-            for child in node.get_children() {
-                self.construct_boxes_for_tree(&child, config);
+                        page.boxes.push(BurroBox::Glyph {
+                            pos: Position {
+                                x: self.cursor.x,
+                                y: self.cursor.y,
+                            },
+                            id: glyph.glyph_id,
+                            font: self
+                                .font_map
+                                .font_id(&self.params.font_family, self.font.font_num()),
+                            pts: self.params.pt_size,
+                        });
+
+                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
+                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    }
+                    self.cursor.x += self.params.space_width;
+                }
             }
+            Alignment::Center => {
+                let total_width = self.total_line_width(&line);
+                let available = self.params.page_width - self.params.margin_right - self.cursor.x;
+                self.cursor.x = self.params.margin_left + (available - total_width) / 2.;
+                for word in line {
+                    for (ix, glyph) in word.char_infos.iter().enumerate() {
+                        let pos = word.char_boxes[ix];
 
-            if style_added {
-                self.styles.pop();
+                        page.boxes.push(BurroBox::Glyph {
+                            pos: Position {
+                                x: self.cursor.x,
+                                y: self.cursor.y,
+                            },
+                            id: glyph.glyph_id,
+                            font: self
+                                .font_map
+                                .font_id(&self.params.font_family, self.font.font_num()),
+                            pts: self.params.pt_size,
+                        });
+
+                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
+                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    }
+                    self.cursor.x += self.params.space_width;
+                }
             }
         }
     }
-}
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct CharBox {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-    pub styles: Vec<Style>,
-    pub c: String,
-}
+    fn total_line_width(&self, line: &[Word]) -> f64 {
+        let word_width: f64 = line.iter().map(|w| w.width()).sum();
+        let space_width = self.params.space_width * (line.len() - 1) as f64;
+        word_width + space_width
+    }
 
-#[derive(Debug, PartialEq, Clone)]
-pub struct FontStyle {
-    pub font: BuiltinFont,
-    pub point_size: f32,
-}
-
-impl FontStyle {
-    pub fn new(font: BuiltinFont, point_size: f32) -> FontStyle {
-        FontStyle{
-            font,
-            point_size
-        }
+    fn font_units_to_points(&self, units: i32, face: &Face) -> f64 {
+        font_units_to_points(units, face, self.params.pt_size)
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Style {
-    Font(FontStyle),
-}
-
-pub struct LayoutConfig {
-    pub height: f32,
-    pub width: f32,
-    pub left_margin: f32,
-    pub top_margin: f32,
-    pub right_margin: f32,
-    pub bottom_margin: f32,
-    pub leading: f32,
-    pub font_height: f32,
-    pub paragraph_break: f32,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum BurroBox {
-    Char(CharBox),
-}
-
-fn get_current_font(styles : &Vec<Style>) -> BuiltinFont {
-    let fonts = styles.into_iter().map(|fs| {
-        match fs {
-            Style::Font(style) => style.font,
-        }
-    }).collect::<Vec<BuiltinFont>>();
-
-    let mut result = 0b0;
-
-    for font in fonts {
-        result = match font {
-            BuiltinFont::Times_Bold => result | 0b1,
-            BuiltinFont::Times_Italic => result | 0b10,
-            _ => result | 0b0,
-        }
-    }
-
-    match result {
-        0b1 => BuiltinFont::Times_Bold,
-        0b10 => BuiltinFont::Times_Italic,
-        0b11 => BuiltinFont::Times_BoldItalic,
-        _ => BuiltinFont::Times_Roman,
-    }
-}
-
-impl Layout {
-    pub fn new(width: f32, height: f32) -> Layout {
-        Layout {
-            width,
-            height,
-            boxes: vec![],
-        }
-    }
-
-    pub fn construct(&mut self, root : &Node) {
-        let config = LayoutConfig {
-            height: self.height,
-            width: self.width,
-            left_margin: 72.0,
-            right_margin: 72.0,
-            top_margin: 72.0,
-            bottom_margin: 72.0,
-            leading: 2.0,
-            paragraph_break: 24.0,
-            font_height: 12.0,
-        };
-        let mut constructor = LayoutConstructor::new(&config);
-        constructor.construct_boxes_for_tree(root, &config);
-        self.boxes = constructor.boxes;
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use parser::Node::*;
-
-    #[test]
-    fn layout_with_simple_text() {
-        let tree = Document(
-            vec![
-                Paragraph(
-                    vec![Text(String::from("abc"))],
-                ),
-            ],
-        );
-
-        let expected = Layout{
-            boxes: vec![
-                BurroBox::Char(CharBox{
-                    x: 72.0,
-                    y: 428.0,
-                    width: 5.328,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Roman,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("a"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 77.328,
-                    y: 428.0,
-                    width: 6.0,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Roman,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("b"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 83.328,
-                    y: 428.0,
-                    width: 5.328,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Roman,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("c"),
-                }),
-                ],
-                height: 500.0,
-                width: 500.0,
-        };
-
-        let mut result = Layout::new(500.0, 500.0);
-        result.construct(&tree);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn layout_with_bold_text() {
-        let tree = Document(
-            vec![
-                Paragraph(
-                    vec![
-                        Bold(
-                            vec![Text(String::from("abc"))]
-                        ),
-                    ],
-                ),
-            ],
-        );
-
-        let expected = Layout{
-            boxes: vec![
-                BurroBox::Char(CharBox{
-                    x: 72.0,
-                    y: 428.0,
-                    width: 6.0,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Bold,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("a"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 78.0,
-                    y: 428.0,
-                    width: 6.672,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Bold,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("b"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 84.672,
-                    y: 428.0,
-                    width: 5.328,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Bold,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("c"),
-                }),
-            ],
-            height: 500.0,
-            width: 500.0,
-        };
-
-        let mut result = Layout::new(500.0, 500.0);
-        result.construct(&tree);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn layout_with_paragraphs() {
-        let tree = Document(
-            vec![
-                Paragraph(
-                    vec![Text(String::from("1"))]
-                ),
-                Paragraph(
-                    vec![Text(String::from("2"))]
-                ),
-            ],
-        );
-
-        let expected = Layout{
-            boxes: vec![
-                BurroBox::Char(CharBox{
-                    x: 72.0,
-                    y: 428.0,
-                    width: 6.0,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Roman,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("1"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 72.0,
-                    y: 404.0,
-                    width: 6.0,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Roman,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("2"),
-                })
-            ],
-            height: 500.0,
-            width: 500.0,
-        };
-
-        let mut result = Layout::new(500.0, 500.0);
-        result.construct(&tree);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn layout_with_nested_fonts() {
-        let tree = Document(
-            vec![
-                Paragraph(
-                    vec![
-                        Bold(
-                            vec![
-                                Text(String::from("a")),
-                                Italic(
-                                    vec![Text(String::from("b"))],
-                                ),
-                            ],
-                        ),
-                        Text(String::from("c")),
-                    ]
-                ),
-            ],
-        );
-
-        let expected = Layout{
-            boxes: vec![
-                BurroBox::Char(CharBox{
-                    x: 72.0,
-                    y: 428.0,
-                    width: 6.0,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Bold,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("a"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 78.0,
-                    y: 428.0,
-                    width: 6.0,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_BoldItalic,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("b"),
-                }),
-                BurroBox::Char(CharBox{
-                    x: 84.0,
-                    y: 428.0,
-                    width: 5.328,
-                    height: 12.0,
-                    styles: vec![Style::Font(FontStyle{
-                        font: BuiltinFont::Times_Roman,
-                        point_size: 12.0,
-                    })],
-                    c: String::from("c"),
-                }),
-            ],
-            height: 500.0,
-            width: 500.0,
-        };
-
-        let mut result = Layout::new(500.0, 500.0);
-        result.construct(&tree);
-        assert_eq!(result, expected);
-    }
-
-    #[test]
-    fn get_current_font_empty_styles() {
-        assert_eq!(get_current_font(&vec![]), BuiltinFont::Times_Roman);
-    }
-
-    #[test]
-    fn get_current_font_one_style() {
-        let styles = vec![
-            Style::Font(FontStyle{
-                font: BuiltinFont::Times_Bold,
-                point_size: 12.0,
-            }),
-        ];
-        assert_eq!(get_current_font(&styles), BuiltinFont::Times_Bold);
-    }
-
-    #[test]
-    fn get_current_font_two_styles() {
-        let styles = vec![
-            Style::Font(FontStyle{
-                font: BuiltinFont::Times_Bold,
-                point_size: 12.0,
-            }),
-            Style::Font(FontStyle{
-                font: BuiltinFont::Times_Italic,
-                point_size: 12.0,
-            }),
-        ];
-        assert_eq!(get_current_font(&styles), BuiltinFont::Times_BoldItalic);
-    }
+fn font_units_to_points(units: i32, face: &Face, pt_size: f64) -> f64 {
+    let upem = face.units_per_em() as f64;
+    (units as f64) * pt_size / upem
 }

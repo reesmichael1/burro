@@ -1,24 +1,31 @@
-extern crate burro;
-#[macro_use] 
-extern crate log;
-extern crate simplelog;
-
-use std::env;
+use std::path::Path;
 use std::process;
-use simplelog::{TermLogger, LevelFilter};
 
-use burro::Config;
+use gumdrop::Options;
+use log::error;
+use simplelog::{LevelFilter, TermLogger};
 
-fn main() {
-    TermLogger::init(LevelFilter::Info, simplelog::Config::default()).unwrap();
+#[derive(Debug, Options)]
+struct BurroOptions {
+    #[options(help = "path to the font mapping file", required)]
+    font_map: String,
 
-    let config = Config::new(env::args()).unwrap_or_else(|err| {
-        error!("problem parsing arguments: {}", err);
-        process::exit(1);
-    });
+    #[options(help = "path to the input Burro file", required, free)]
+    source_file: String,
 
-    if let Err(err) = burro::run(config) {
-        error!("application error: {}", err);
+    #[options(help = "show help message")]
+    help: bool,
+}
+
+fn main() -> Result<(), anyhow::Error> {
+    TermLogger::init(LevelFilter::Info, simplelog::Config::default())?;
+
+    let opts = BurroOptions::parse_args_default_or_exit();
+
+    if let Err(err) = burro::run(&Path::new(&opts.source_file), &Path::new(&opts.font_map)) {
+        error!("error: {}", err);
         process::exit(1)
     }
+
+    Ok(())
 }

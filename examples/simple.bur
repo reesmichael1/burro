@@ -1,1 +1,10 @@
-.bold 1
+.start
+
+.align[center]
+
+This is a text node.
+
+And another line
+with a line break.
+
+.bold[Burro: .italic[a new]] typesetting .italic[language]

@@ -1,0 +1,71 @@
+.paper{.
+    .size[letter]
+}[]
+
+.margins[1in]
+; alias for .margin_top[1in] .margin_bottom[1in] ... 
+; (note that a line beginning with ; is a comment)
+
+.start
+
+.align[center]
+.bold[Burro]: .italic[A typesetting language that's easy to type]
+.align[-]
+
+Burro is directly inspired by, and aims to be a spiritual successor to, groff with the mom macro set.
+
+Suppose I'm typing and I want to switch to being .bold[bold. Now I have inner arguments, .italic[which is actually not too bad].]
+
+Historically, I haven't wanted to introduce braces as a delimiter, but I will admit that it solves .bold[many problems with whitespace delimiting].
+
+The advantage of the square braces over the curly braces is that using the square braces .italic[doesn't require a modifier key] (in keeping with our guiding principle of ease of typing).
+
+.align[center]
+.pt[18] 
+Governing Principles
+.pt[12]
+.align[-]
+
+Here's an example of the "-" argument. For keywords such as \.align or \.pt, this resets to the previous value. 
+The default for \.align is \.align[justify], so calling \.align[-] after \.align[center] resets the alignment to justified.
+Note how I used \ to escape the literal \. at the beginning of the word.
+We do not need to escape this single backslash as it is followed by a space, so Burro knows it's not escaping a dot.
+
+.list
+.item[As a typesetting language, Burro .bold[must] be .italic[easy to type].]
+.item[Ease of reading the source is a lower priority than ease of typing it.]
+.item[Burro should have a sane font installation process .pt[8].italic[cough cough groff].pt[-]]
+.list[off]
+
+How do I want to handle absolute positioning? TBD.
+I do like the idea of creating "page" blocks that can be moved as a whole in the output.
+Single line breaks like this have no impact on the output, while double line breaks create new paragraphs.
+
+One idea I've had is to allow "package" development by using hooks which can modify the AST at compile time.
+
+.vspace[3em]
+
+General trends I'm figuring out as I type:
+.list
+.item[If a keyword accepts an argument, it must be bounded by square braces.]
+.item[Otherwise, a keyword must appear by itself on its own line.]
+.list
+.item[What if a keyword needs multiple arguments, you ask?]
+.item[See the curly brace syntax below!]
+.list[off]
+.list[off]
+
+Burro does not aim to compete with TeX and friends for scientific documents--equation typesetting is not a priority! Instead, Burro's niche is in text heavy documents.
+
+Variables can be defined with the #define syntax. This goes on its own line, can be anywhere in the source, and is not output in the document. Once a variable has been defined, it can later be referenced with the ~ operator.
+
+#define(box_text)(This is an interesting style for multiple arguments. It's cumbersome enough that they're discouraged, but still possible when necessary.)
+
+.align[center]
+.box{
+  .background_color[#aaaaaa]
+  .border[2pt]
+  .border_color[#000000]
+  .width[4in]
+}[~box_text]
+.align[-]

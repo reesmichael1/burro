@@ -1,3 +1,11 @@
-This file is updated to demonstrate the combination of burro's current features. It should be a reasonable barometer for the bleeding-edge status of burro.
+.start
+.align[center]
 
-This line break creates a new paragraph. .italic These words are italicized, .bold while these are both bold and italicized.|| .bold These words are just bold.|
+.bold[Burro]
+
+.align[justify]
+This is a demonstration of .italic[Burro], a new typesetting language.
+
+Burro's prime directive is that it, as a typesetting language, should be easy to type while still producing beautiful documents. Everything else is secondary to those goals, including ease of reading.
+
+It is also important that the author should have complete control over the placement of .italic[everything] that happens on the page. Burro strives to have high\-quality defaults that can be easily tweaked when necessary.
