@@ -313,4 +313,23 @@ second paragraph";
 
         Ok(())
     }
+
+    #[test]
+    fn nested_style_with_no_space() -> Result<(), ParseError> {
+        let input = ".start
+a.bold[b]c";
+
+        let expected = Document {
+            nodes: vec![Node::Paragraph(vec![
+                words_to_text(&["a"]),
+                StyleBlock::Bold(vec![words_to_text(&["b"])]),
+                words_to_text(&["c"]),
+            ])],
+        };
+
+        let doc = parse_tokens(&lex(input))?;
+        assert_eq!(expected, doc);
+
+        Ok(())
+    }
 }

@@ -79,6 +79,22 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
             ['\n', ..] => (current, &tokens[..]),
             ['\r', '\n', ..] => (current, &tokens[1..]),
             ['[', ..] | [']', ..] => (current, &tokens),
+            ['.', ' ', rest @ ..] => {
+                let mut current = current;
+                current.push(tokens[0]);
+                return (current, rest);
+            }
+            ['.', '\n', ..] | ['.', '\r', '\n', ..] => {
+                let mut current = current;
+                current.push(tokens[0]);
+                return (current, &tokens[1..]);
+            }
+            ['.'] => {
+                let mut current = current;
+                current.push(tokens[0]);
+                return (current, &[]);
+            }
+            ['.', ..] => (current, &tokens),
             ['\\', ch, rest @ ..] => {
                 let mut current = current;
                 current.push(*ch);
@@ -144,5 +160,19 @@ mod tests {
 
         let input = "\\.start hello\\[world\\] \\\\ \\[world\\]";
         assert_eq!(expected, lex(&input));
+    }
+
+    #[test]
+    fn command_inside_word() {
+        let expected = vec![
+            Token::Word("a".to_string()),
+            Token::Command("bold".to_string()),
+            Token::OpenSquare,
+            Token::Word("b".to_string()),
+            Token::CloseSquare,
+            Token::Word("c.".to_string()),
+        ];
+
+        assert_eq!(expected, lex("a.bold[b]c."));
     }
 }
