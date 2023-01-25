@@ -2,6 +2,7 @@
 pub enum Token {
     Command(String),
     Word(String),
+    Space,
     OpenSquare,
     CloseSquare,
     Newline,
@@ -36,7 +37,12 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
             remaining.insert(0, Token::Reset);
             return remaining;
         }
-        [' ', rest @ ..] => lex_rest(&rest),
+        [' ', rest @ ..] | ['\t', rest @ ..] => {
+            let after_space = pop_spaces(&rest);
+            let mut remaining = lex_rest(&after_space);
+            remaining.insert(0, Token::Space);
+            return remaining;
+        }
         ['.', rest @ ..] => {
             let (s, rem) = lex_string(&rest);
             let mut remaining = lex_rest(&rem);
@@ -58,11 +64,18 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
     }
 }
 
+fn pop_spaces(chars: &[char]) -> &[char] {
+    match chars {
+        [' ', rest @ ..] | ['\t', rest @ ..] => pop_spaces(rest),
+        _ => chars,
+    }
+}
+
 fn lex_string(chars: &[char]) -> (String, &[char]) {
     fn accumulator(current: String, tokens: &[char]) -> (String, &[char]) {
         match tokens {
             [] => (current, &tokens),
-            [' ', rest @ ..] => (current, &rest),
+            [' ', ..] | ['\t', ..] => (current, &tokens),
             ['\n', ..] => (current, &tokens[..]),
             ['\r', '\n', ..] => (current, &tokens[1..]),
             ['[', ..] | [']', ..] => (current, &tokens),
@@ -104,6 +117,7 @@ mod tests {
             Token::Newline,
             Token::Newline,
             Token::Word("foo".to_string()),
+            Token::Space,
             Token::Word("bar".to_string()),
             Token::Newline,
             Token::Command("align".to_string()),
@@ -120,8 +134,11 @@ mod tests {
     fn escaping_chars() {
         let expected = vec![
             Token::Word(".start".to_string()),
+            Token::Space,
             Token::Word("hello[world]".to_string()),
+            Token::Space,
             Token::Word("\\".to_string()),
+            Token::Space,
             Token::Word("[world]".to_string()),
         ];
 

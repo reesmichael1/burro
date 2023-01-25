@@ -4,7 +4,7 @@ use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::parser;
-use crate::parser::{Command, Document, Node, StyleBlock};
+use crate::parser::{Command, Document, Node, StyleBlock, TextUnit};
 use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
@@ -53,15 +53,8 @@ enum Alignment {
     Justify,
 }
 
-// #[allow(dead_code)]
-// #[derive(Eq, Hash, PartialEq)]
-// enum Font {
-//     Bold,
-//     Italic,
-//     Roman,
-// }
-
 struct Word<'a> {
+    contents: &'a TextUnit,
     char_boxes: Vec<GlyphPosition>,
     char_infos: Vec<GlyphInfo>,
     pt_size: f64,
@@ -69,18 +62,31 @@ struct Word<'a> {
 }
 
 impl<'a> Word<'a> {
-    fn new(word: &'a str, face: &'a Face, pt_size: f64) -> Self {
-        let mut in_buf = UnicodeBuffer::new();
-        in_buf.push_str(word);
-        let out_buf = shape(&face, &vec![], in_buf);
-        let info = out_buf.glyph_infos();
-        let positions = out_buf.glyph_positions();
+    fn new(word: &'a TextUnit, face: &'a Face, pt_size: f64) -> Self {
+        match word {
+            TextUnit::Str(s) => {
+                let mut in_buf = UnicodeBuffer::new();
+                in_buf.push_str(&s);
+                let out_buf = shape(&face, &vec![], in_buf);
+                let info = out_buf.glyph_infos();
+                let positions = out_buf.glyph_positions();
 
-        Self {
-            char_boxes: positions.to_vec(),
-            char_infos: info.to_vec(),
-            pt_size,
-            face,
+                Self {
+                    contents: word,
+                    char_boxes: positions.to_vec(),
+                    char_infos: info.to_vec(),
+                    pt_size,
+                    face,
+                }
+            }
+
+            TextUnit::Space => Self {
+                contents: word,
+                char_boxes: vec![],
+                char_infos: vec![],
+                pt_size,
+                face,
+            },
         }
     }
 
@@ -90,6 +96,13 @@ impl<'a> Word<'a> {
             self.face,
             self.pt_size,
         )
+    }
+
+    fn is_space(&self) -> bool {
+        match self.contents {
+            TextUnit::Space => true,
+            _ => false,
+        }
     }
 }
 
@@ -221,7 +234,11 @@ impl<'a> LayoutBuilder<'a> {
                         if self.total_line_width(&current_line)
                             > self.params.page_width - self.cursor.x - self.params.margin_right
                         {
-                            let last_word = current_line.pop().unwrap();
+                            // TODO: what happens when there's a word longer than the line?
+                            let mut last_word = current_line.pop().unwrap();
+                            while last_word.is_space() {
+                                last_word = current_line.pop().unwrap();
+                            }
 
                             self.emit_line(current_line, &mut page, &face, false);
 
@@ -250,61 +267,57 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
+    fn emit_word(&mut self, word: &Word, page: &mut Page, face: &Face) {
+        for (ix, glyph) in word.char_infos.iter().enumerate() {
+            let pos = word.char_boxes[ix];
+
+            page.boxes.push(BurroBox::Glyph {
+                pos: Position {
+                    x: self.cursor.x,
+                    y: self.cursor.y,
+                },
+                id: glyph.glyph_id,
+                font: self
+                    .font_map
+                    .font_id(&self.params.font_family, self.font.font_num()),
+                pts: self.params.pt_size,
+            });
+
+            self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
+            self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+        }
+    }
+
     fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, face: &Face, last: bool) {
         match self.params.alignment {
             // Everything in this assumes that we're emitting text from left to right,
             // so we'll need to rework this to support other scripts.
             Alignment::Left => {
                 for word in line {
-                    for (ix, glyph) in word.char_infos.iter().enumerate() {
-                        let pos = word.char_boxes[ix];
-
-                        page.boxes.push(BurroBox::Glyph {
-                            pos: Position {
-                                x: self.cursor.x,
-                                y: self.cursor.y,
-                            },
-                            id: glyph.glyph_id,
-                            font: self
-                                .font_map
-                                .font_id(&self.params.font_family, self.font.font_num()),
-                            pts: self.params.pt_size,
-                        });
-
-                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
-                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    match word.contents {
+                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
-                    self.cursor.x += self.params.space_width;
                 }
             }
             Alignment::Justify => {
                 let total_width = self.total_line_width(&line);
                 let available = self.params.page_width - self.params.margin_right - self.cursor.x;
+
+                let space_count = line.iter().filter(|w| w.is_space()).count();
                 let space_width =
-                    self.params.space_width + (available - total_width) / line.len() as f64;
+                    self.params.space_width + (available - total_width) / space_count as f64;
+
                 for word in line {
-                    for (ix, glyph) in word.char_infos.iter().enumerate() {
-                        let pos = word.char_boxes[ix];
-
-                        page.boxes.push(BurroBox::Glyph {
-                            pos: Position {
-                                x: self.cursor.x,
-                                y: self.cursor.y,
-                            },
-                            id: glyph.glyph_id,
-                            font: self
-                                .font_map
-                                .font_id(&self.params.font_family, self.font.font_num()),
-                            pts: self.params.pt_size,
-                        });
-
-                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
-                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
-                    }
-                    if last {
-                        self.cursor.x += self.params.space_width;
-                    } else {
-                        self.cursor.x += space_width;
+                    match word.contents {
+                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Space => {
+                            if last {
+                                self.cursor.x += self.params.space_width;
+                            } else {
+                                self.cursor.x += space_width;
+                            }
+                        }
                     }
                 }
             }
@@ -312,60 +325,43 @@ impl<'a> LayoutBuilder<'a> {
                 let total_width = self.total_line_width(&line);
                 let available = self.params.page_width - self.params.margin_right - self.cursor.x;
                 self.cursor.x = self.params.margin_left + available - total_width;
+
                 for word in line {
-                    for (ix, glyph) in word.char_infos.iter().enumerate() {
-                        let pos = word.char_boxes[ix];
-
-                        page.boxes.push(BurroBox::Glyph {
-                            pos: Position {
-                                x: self.cursor.x,
-                                y: self.cursor.y,
-                            },
-                            id: glyph.glyph_id,
-                            font: self
-                                .font_map
-                                .font_id(&self.params.font_family, self.font.font_num()),
-                            pts: self.params.pt_size,
-                        });
-
-                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
-                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    match word.contents {
+                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
-                    self.cursor.x += self.params.space_width;
                 }
             }
             Alignment::Center => {
                 let total_width = self.total_line_width(&line);
                 let available = self.params.page_width - self.params.margin_right - self.cursor.x;
                 self.cursor.x = self.params.margin_left + (available - total_width) / 2.;
+
                 for word in line {
-                    for (ix, glyph) in word.char_infos.iter().enumerate() {
-                        let pos = word.char_boxes[ix];
-
-                        page.boxes.push(BurroBox::Glyph {
-                            pos: Position {
-                                x: self.cursor.x,
-                                y: self.cursor.y,
-                            },
-                            id: glyph.glyph_id,
-                            font: self
-                                .font_map
-                                .font_id(&self.params.font_family, self.font.font_num()),
-                            pts: self.params.pt_size,
-                        });
-
-                        self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
-                        self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+                    match word.contents {
+                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
-                    self.cursor.x += self.params.space_width;
                 }
             }
         }
     }
 
     fn total_line_width(&self, line: &[Word]) -> f64 {
-        let word_width: f64 = line.iter().map(|w| w.width()).sum();
-        let space_width = self.params.space_width * (line.len() - 1) as f64;
+        let word_width: f64 = line
+            .iter()
+            .filter(|w| *w.contents != TextUnit::Space)
+            .map(|w| w.width())
+            .sum();
+        let mut space_count = line
+            .iter()
+            .filter(|w| *w.contents == TextUnit::Space)
+            .count();
+        if line.last().unwrap().is_space() {
+            space_count -= 1;
+        }
+        let space_width = self.params.space_width * space_count as f64;
         word_width + space_width
     }
 

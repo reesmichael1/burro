@@ -19,7 +19,13 @@ pub enum Command {
 pub enum StyleBlock {
     Bold(Vec<StyleBlock>),
     Italic(Vec<StyleBlock>),
-    Text(Vec<String>),
+    Text(Vec<TextUnit>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum TextUnit {
+    Str(String),
+    Space,
 }
 
 #[derive(Debug, PartialEq)]
@@ -110,15 +116,23 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
     }
 }
 
-fn parse_text(words: Vec<String>, tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseError> {
+fn parse_text(
+    words: Vec<TextUnit>,
+    tokens: &[Token],
+) -> Result<(StyleBlock, &[Token]), ParseError> {
     let mut words = words;
     match tokens {
         [Token::Word(word), rest @ ..] => {
-            words.push(word.to_string());
+            words.push(TextUnit::Str(word.to_string()));
             parse_text(words, rest)
         }
         [Token::Newline, Token::Word(word), rest @ ..] => {
-            words.push(word.to_string());
+            words.push(TextUnit::Space);
+            words.push(TextUnit::Str(word.to_string()));
+            parse_text(words, rest)
+        }
+        [Token::Space, rest @ ..] => {
+            words.push(TextUnit::Space);
             parse_text(words, rest)
         }
         _ => Ok((StyleBlock::Text(words), tokens)),
@@ -176,7 +190,8 @@ fn parse_style_block_list(tokens: &[Token]) -> Result<(Vec<StyleBlock>, &[Token]
 
 fn parse_style_block(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseError> {
     match tokens {
-        [Token::Word(word), rest @ ..] => parse_text(vec![word.to_string()], rest),
+        [Token::Word(word), rest @ ..] => parse_text(vec![TextUnit::Str(word.to_string())], rest),
+        [Token::Space, rest @ ..] => parse_text(vec![TextUnit::Space], rest),
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
             "bold" => parse_bold_command(rest),
             "italic" => parse_italic_command(rest),
@@ -209,7 +224,30 @@ mod tests {
     use crate::lexer::lex;
 
     fn words_to_text(words: &[&str]) -> StyleBlock {
-        let converted = words.into_iter().map(|s| s.to_string()).collect();
+        let mut converted = vec![];
+        for (ix, word) in words.iter().enumerate() {
+            if *word == " " {
+                converted.push(TextUnit::Space);
+                continue;
+            }
+            converted.push(TextUnit::Str(word.to_string()));
+            if ix != words.len() - 1 {
+                converted.push(TextUnit::Space);
+            }
+        }
+        StyleBlock::Text(converted)
+    }
+
+    fn words_to_text_sp(words: &[&str]) -> StyleBlock {
+        let mut converted = vec![];
+        for word in words.iter() {
+            if *word == " " {
+                converted.push(TextUnit::Space);
+                continue;
+            }
+            converted.push(TextUnit::Str(word.to_string()));
+            converted.push(TextUnit::Space);
+        }
         StyleBlock::Text(converted)
     }
 
@@ -238,11 +276,11 @@ This is a text node.";
         let expected = Document {
             nodes: vec![Node::Paragraph(vec![
                 StyleBlock::Bold(vec![
-                    words_to_text(&["Bold"]),
+                    words_to_text_sp(&["Bold"]),
                     StyleBlock::Italic(vec![words_to_text(&["and", "italic"])]),
-                    words_to_text(&["and", "bold"]),
+                    words_to_text(&[" ", "and", "bold"]),
                 ]),
-                words_to_text(&["and", "normal"]),
+                words_to_text_sp(&[" ", "and", "normal"]),
                 StyleBlock::Italic(vec![words_to_text(&["and", "italic"])]),
             ])],
         };
