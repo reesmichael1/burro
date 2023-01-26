@@ -235,7 +235,10 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn finish_paragraph(&mut self) {
-        let mut page = self.pages.pop().unwrap();
+        let mut page = self
+            .pages
+            .pop()
+            .expect("should have at least one page stored, please file a bug");
         let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
         self.emit_line(remaining_line, &mut page, true);
         self.pages.push(page);
@@ -251,19 +254,27 @@ impl<'a> LayoutBuilder<'a> {
                     //
                     // Then, once we know where the lines are,
                     // we can continue by adding a box for each glyph position.
-                    let font_data = match self.font_data.get(&self.font) {
-                        Some(d) => d.clone(),
-                        None => return Err(BurroError::UnmappedFont),
-                    };
 
-                    let face = ttf_parser::Face::parse(&font_data, 0).unwrap();
-                    let face = rustybuzz::Face::from_face(face).unwrap();
+                    let font_data = self
+                        .font_data
+                        .get(&self.font)
+                        .ok_or(BurroError::UnmappedFont)?
+                        .clone();
+
+                    let face = ttf_parser::Face::parse(&font_data, 0)
+                        .map_err(|_| BurroError::FaceParsingError)?;
+
+                    let face =
+                        rustybuzz::Face::from_face(face).ok_or(BurroError::FaceParsingError)?;
 
                     let font_id = self
                         .font_map
                         .font_id(&self.params.font_family, self.font.font_num());
 
-                    let mut page = self.pages.pop().unwrap();
+                    let mut page = self
+                        .pages
+                        .pop()
+                        .expect("should have any pages stored, please file a bug");
                     let mut current_line = std::mem::replace(&mut self.current_line, vec![]);
 
                     for word in words {
@@ -271,10 +282,14 @@ impl<'a> LayoutBuilder<'a> {
                         if self.total_line_width(&current_line)
                             > self.params.page_width - self.cursor.x - self.params.margin_right
                         {
-                            // TODO: what happens when there's a word longer than the line?
-                            let mut last_word = current_line.pop().unwrap();
+                            let mut last_word = current_line
+                                .pop()
+                                .expect("still need to handle words longer than the line");
                             while last_word.is_space() {
-                                last_word = current_line.pop().unwrap();
+                                last_word = match current_line.pop() {
+                                    Some(w) => w,
+                                    None => return Ok(()),
+                                };
                             }
 
                             self.emit_line(current_line, &mut page, false);
@@ -334,8 +349,14 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, last: bool) {
+        if line.len() == 0 {
+            return;
+        }
+
         let mut line = line;
         if !last {
+            // This unwrap should never panic
+            // since the line is guaranteed to have at least one element
             while line.last().unwrap().is_space() {
                 line.pop();
                 if line.len() == 0 {
@@ -404,6 +425,10 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn total_line_width(&self, line: &[Word]) -> f64 {
+        if line.len() == 0 {
+            return 0.;
+        }
+
         let word_width: f64 = line
             .iter()
             .filter(|w| *w.contents != TextUnit::Space)
@@ -413,6 +438,8 @@ impl<'a> LayoutBuilder<'a> {
             .iter()
             .filter(|w| *w.contents == TextUnit::Space)
             .count();
+
+        // This unwrap should never panic since the line is guaranteed to have at least one element
         if line.last().unwrap().is_space() {
             space_count -= 1;
         }

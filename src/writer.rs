@@ -1,16 +1,17 @@
 use std::collections::HashMap;
-
-use printpdf::*;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::Path;
 
+use printpdf::*;
+
+use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::layout::{BurroBox, Layout, Page};
 
-pub fn write_pdf(layout: &Layout, font_map: &FontMap, dest: &Path) {
+pub fn write_pdf(layout: &Layout, font_map: &FontMap, dest: &Path) -> Result<(), BurroError> {
     if layout.pages.len() == 0 {
-        return;
+        return Ok(());
     }
 
     let page = &layout.pages[0];
@@ -37,8 +38,11 @@ pub fn write_pdf(layout: &Layout, font_map: &FontMap, dest: &Path) {
                         let font = &fonts[font_id];
                         current_layer.set_font(font, *pts);
                     } else {
-                        let path = font_map.font_from_id(*font_id).as_ref().unwrap();
-                        let font = doc.add_external_font(File::open(&path).unwrap()).unwrap();
+                        let path = font_map
+                            .font_from_id(font_id)
+                            .as_ref()
+                            .expect("should have mappings for all fonts, please file a bug");
+                        let font = doc.add_external_font(File::open(&path)?)?;
                         fonts.insert(*font_id, font.clone());
                         current_layer.set_font(&font, *pts);
                     }
@@ -58,8 +62,9 @@ pub fn write_pdf(layout: &Layout, font_map: &FontMap, dest: &Path) {
         }
     }
 
-    doc.save(&mut BufWriter::new(File::create(dest).unwrap()))
-        .unwrap();
+    doc.save(&mut BufWriter::new(File::create(dest)?))?;
+
+    Ok(())
 }
 
 fn page_dimensions(page: &Page) -> (Mm, Mm) {

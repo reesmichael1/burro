@@ -27,6 +27,6 @@ pub fn run(path: &Path, font_map: &Path) -> Result<(), BurroError> {
     let builder = LayoutBuilder::new(&fonts)?;
     let layout = builder.build(&doc)?;
     let dest = get_destination(path);
-    writer::write_pdf(&layout, &fonts, &dest);
+    writer::write_pdf(&layout, &fonts, &dest)?;
     Ok(())
 }

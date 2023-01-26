@@ -17,7 +17,7 @@ impl FontMap {
         ((self.family_ids[family] as u32) << 16) + (font_num as u32)
     }
 
-    pub fn font_from_id(&self, font_id: u32) -> &Option<PathBuf> {
+    pub fn font_from_id(&self, font_id: &u32) -> &Option<PathBuf> {
         let family_id = (font_id >> 16) as u16;
         let font_num = (font_id & 0b00000000000000001111111111111111) as u16;
         let family = &self.families[&self.ids_to_family[&family_id]];
@@ -51,7 +51,12 @@ pub fn parse(path: &Path) -> Result<FontMap, BurroError> {
     let mut family_ids = HashMap::new();
     let mut ids_to_family = HashMap::new();
     let mut counter: u16 = 0;
-    for (name, family) in (&config["families"]).as_table().unwrap() {
+
+    let mapping = config["families"]
+        .as_table()
+        .ok_or(BurroError::BadFontMap)?;
+
+    for (name, family) in mapping {
         families.insert(name.clone(), parse_fonts(family)?);
         family_ids.insert(name.clone(), counter);
         ids_to_family.insert(counter, name.clone());
@@ -68,19 +73,24 @@ pub fn parse(path: &Path) -> Result<FontMap, BurroError> {
 fn parse_fonts(family: &toml::Value) -> Result<Fonts, BurroError> {
     let mut fonts = Fonts::default();
 
-    let mapping = family.as_table().unwrap();
+    let mapping = family.as_table().ok_or(BurroError::BadFontMap)?;
+
     for (font, path) in mapping {
-        // TODO: handle nested fonts in any order (e.g., italic_bold as well)
+        // TODO: handle nested fonts in any order (e.g., italic_bold as well as bold_italic)
         // Also, we should either raise an error on duplicates
         // or use indexmap to only use the last one in the file.
         match font.as_ref() {
-            "roman" => fonts.roman = Some(path.as_str().unwrap().into()),
-            "bold" => fonts.bold = Some(path.as_str().unwrap().into()),
-            "italic" => fonts.italic = Some(path.as_str().unwrap().into()),
-            "bold_italic" => fonts.bold_italic = Some(path.as_str().unwrap().into()),
+            "roman" => fonts.roman = load_fontmap_path(path)?,
+            "bold" => fonts.bold = load_fontmap_path(path)?,
+            "italic" => fonts.italic = load_fontmap_path(path)?,
+            "bold_italic" => fonts.bold_italic = load_fontmap_path(path)?,
             _ => return Err(BurroError::UnknownFont(font.to_string())),
         }
     }
 
     Ok(fonts)
+}
+
+fn load_fontmap_path(path: &Value) -> Result<Option<PathBuf>, BurroError> {
+    Ok(Some(path.as_str().ok_or(BurroError::BadFontMap)?.into()))
 }

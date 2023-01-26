@@ -14,4 +14,10 @@ pub enum BurroError {
     UnknownFont(String),
     #[error("tried to use font without a corresponding mapping")]
     UnmappedFont,
+    #[error("problem while loading font file")]
+    FaceParsingError,
+    #[error("problem while writing the PDF")]
+    PDFError(#[from] printpdf::Error),
+    #[error("invalid font map syntax")]
+    BadFontMap,
 }
