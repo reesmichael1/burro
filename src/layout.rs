@@ -57,12 +57,15 @@ struct Word<'a> {
     contents: &'a TextUnit,
     char_boxes: Vec<GlyphPosition>,
     char_infos: Vec<GlyphInfo>,
+    font_id: u32,
+    // It feels like I shouldn't have to keep track of both units-per-em and point size?
+    // Presumably one can be derived from the other.
     pt_size: f64,
-    face: &'a Face<'a>,
+    upem: i32,
 }
 
 impl<'a> Word<'a> {
-    fn new(word: &'a TextUnit, face: &'a Face, pt_size: f64) -> Self {
+    fn new(word: &'a TextUnit, face: &Face, font_id: u32, pt_size: f64) -> Self {
         match word {
             TextUnit::Str(s) => {
                 let mut in_buf = UnicodeBuffer::new();
@@ -76,7 +79,8 @@ impl<'a> Word<'a> {
                     char_boxes: positions.to_vec(),
                     char_infos: info.to_vec(),
                     pt_size,
-                    face,
+                    font_id,
+                    upem: face.units_per_em(),
                 }
             }
 
@@ -85,7 +89,8 @@ impl<'a> Word<'a> {
                 char_boxes: vec![],
                 char_infos: vec![],
                 pt_size,
-                face,
+                font_id,
+                upem: 0,
             },
         }
     }
@@ -93,7 +98,7 @@ impl<'a> Word<'a> {
     fn width(&self) -> f64 {
         font_units_to_points(
             self.char_boxes.iter().map(|c| c.x_advance).sum(),
-            self.face,
+            self.upem,
             self.pt_size,
         )
     }
@@ -135,6 +140,7 @@ pub struct LayoutBuilder<'a> {
     font: Font,
     font_data: HashMap<Font, Vec<u8>>,
     font_map: &'a FontMap,
+    current_line: Vec<Word<'a>>,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -183,10 +189,11 @@ impl<'a> LayoutBuilder<'a> {
             font: Font::ROMAN,
             font_data,
             font_map,
+            current_line: vec![],
         })
     }
 
-    pub fn build(mut self, doc: &Document) -> Layout {
+    pub fn build(mut self, doc: &'a Document) -> Layout {
         for node in &doc.nodes {
             match node {
                 Node::Command(c) => match c {
@@ -204,15 +211,23 @@ impl<'a> LayoutBuilder<'a> {
         Layout { pages: self.pages }
     }
 
-    fn handle_paragraph(&mut self, paragraph: &[StyleBlock]) {
+    fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) {
         self.cursor.x = self.params.margin_left;
 
         self.handle_style_blocks(paragraph);
+        self.finish_paragraph();
         self.cursor.x = self.params.margin_left;
         self.cursor.y -= self.params.leading + self.params.pt_size + self.params.line_height;
     }
 
-    fn handle_style_blocks(&mut self, blocks: &[StyleBlock]) {
+    fn finish_paragraph(&mut self) {
+        let mut page = self.pages.pop().unwrap();
+        let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
+        self.emit_line(remaining_line, &mut page, true);
+        self.pages.push(page);
+    }
+
+    fn handle_style_blocks(&mut self, blocks: &'a [StyleBlock]) {
         for block in blocks {
             match block {
                 StyleBlock::Text(words) => {
@@ -226,11 +241,15 @@ impl<'a> LayoutBuilder<'a> {
                     let raw_face = ttf_parser::Face::parse(font_data, 0).unwrap();
                     let face = rustybuzz::Face::from_face(raw_face).unwrap();
 
+                    let font_id = self
+                        .font_map
+                        .font_id(&self.params.font_family, self.font.font_num());
+
                     let mut page = self.pages.pop().unwrap();
-                    let mut current_line: Vec<Word> = vec![];
+                    let mut current_line = std::mem::replace(&mut self.current_line, vec![]);
 
                     for word in words {
-                        current_line.push(Word::new(word, &face, self.params.pt_size));
+                        current_line.push(Word::new(word, &face, font_id, self.params.pt_size));
                         if self.total_line_width(&current_line)
                             > self.params.page_width - self.cursor.x - self.params.margin_right
                         {
@@ -240,7 +259,7 @@ impl<'a> LayoutBuilder<'a> {
                                 last_word = current_line.pop().unwrap();
                             }
 
-                            self.emit_line(current_line, &mut page, &face, false);
+                            self.emit_line(current_line, &mut page, false);
 
                             self.cursor.x = self.params.margin_left;
                             self.cursor.y -= self.params.leading + self.params.pt_size;
@@ -249,8 +268,7 @@ impl<'a> LayoutBuilder<'a> {
                         }
                     }
 
-                    self.emit_line(current_line, &mut page, &face, true);
-
+                    self.current_line = current_line;
                     self.pages.push(page);
                 }
                 StyleBlock::Bold(blocks) => {
@@ -267,7 +285,7 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
-    fn emit_word(&mut self, word: &Word, page: &mut Page, face: &Face) {
+    fn emit_word(&mut self, word: &Word, page: &mut Page) {
         for (ix, glyph) in word.char_infos.iter().enumerate() {
             let pos = word.char_boxes[ix];
 
@@ -277,22 +295,23 @@ impl<'a> LayoutBuilder<'a> {
                     y: self.cursor.y,
                 },
                 id: glyph.glyph_id,
-                font: self
-                    .font_map
-                    .font_id(&self.params.font_family, self.font.font_num()),
+                font: word.font_id,
                 pts: self.params.pt_size,
             });
 
-            self.cursor.x += self.font_units_to_points(pos.x_advance, &face);
-            self.cursor.y -= self.font_units_to_points(pos.y_advance, &face);
+            self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size);
+            self.cursor.y += font_units_to_points(pos.y_advance, word.upem, word.pt_size);
         }
     }
 
-    fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, face: &Face, last: bool) {
+    fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, last: bool) {
         let mut line = line;
         if !last {
             while line.last().unwrap().is_space() {
                 line.pop();
+                if line.len() == 0 {
+                    return;
+                }
             }
         }
 
@@ -302,7 +321,7 @@ impl<'a> LayoutBuilder<'a> {
             Alignment::Left => {
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Str(_) => self.emit_word(&word, page),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
@@ -317,7 +336,7 @@ impl<'a> LayoutBuilder<'a> {
 
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Str(_) => self.emit_word(&word, page),
                         TextUnit::Space => {
                             if last {
                                 self.cursor.x += self.params.space_width;
@@ -335,7 +354,7 @@ impl<'a> LayoutBuilder<'a> {
 
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Str(_) => self.emit_word(&word, page),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
@@ -347,7 +366,7 @@ impl<'a> LayoutBuilder<'a> {
 
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page, face),
+                        TextUnit::Str(_) => self.emit_word(&word, page),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
@@ -371,13 +390,8 @@ impl<'a> LayoutBuilder<'a> {
         let space_width = self.params.space_width * space_count as f64;
         word_width + space_width
     }
-
-    fn font_units_to_points(&self, units: i32, face: &Face) -> f64 {
-        font_units_to_points(units, face, self.params.pt_size)
-    }
 }
 
-fn font_units_to_points(units: i32, face: &Face, pt_size: f64) -> f64 {
-    let upem = face.units_per_em() as f64;
-    (units as f64) * pt_size / upem
+fn font_units_to_points(units: i32, upem: i32, pt_size: f64) -> f64 {
+    (units as f64) * pt_size / (upem as f64)
 }
