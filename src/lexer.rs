@@ -79,10 +79,10 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
             ['\n', ..] => (current, &tokens[..]),
             ['\r', '\n', ..] => (current, &tokens[1..]),
             ['[', ..] | [']', ..] => (current, &tokens),
-            ['.', ' ', rest @ ..] => {
+            ['.', ' ', ..] => {
                 let mut current = current;
                 current.push(tokens[0]);
-                return (current, rest);
+                return (current, &tokens[1..]);
             }
             ['.', '\n', ..] | ['.', '\r', '\n', ..] => {
                 let mut current = current;
@@ -94,7 +94,17 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
                 current.push(tokens[0]);
                 return (current, &[]);
             }
-            ['.', ..] => (current, &tokens),
+            ['.', rest @ ..] => {
+                // TODO: this will obviously break when we support other languages
+                if rest[0].is_ascii_alphabetic() {
+                    return (current, &tokens);
+                } else {
+                    let mut current = current;
+                    current.push(tokens[0]);
+                    return accumulator(current, rest);
+                }
+            }
+
             ['\\', ch, rest @ ..] => {
                 let mut current = current;
                 current.push(*ch);
@@ -174,5 +184,23 @@ mod tests {
         ];
 
         assert_eq!(expected, lex("a.bold[b]c."));
+    }
+
+    #[test]
+    fn repeated_dots() {
+        let expected = vec![Token::Word("a...".to_string())];
+
+        assert_eq!(expected, lex("a..."));
+    }
+
+    #[test]
+    fn lexing_sentences() {
+        let expected = vec![
+            Token::Word("a.".to_string()),
+            Token::Space,
+            Token::Word("b".to_string()),
+        ];
+
+        assert_eq!(expected, lex("a. b"));
     }
 }
