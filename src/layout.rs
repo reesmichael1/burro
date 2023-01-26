@@ -289,6 +289,13 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, face: &Face, last: bool) {
+        let mut line = line;
+        if !last {
+            while line.last().unwrap().is_space() {
+                line.pop();
+            }
+        }
+
         match self.params.alignment {
             // Everything in this assumes that we're emitting text from left to right,
             // so we'll need to rework this to support other scripts.
