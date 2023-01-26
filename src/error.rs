@@ -12,4 +12,6 @@ pub enum BurroError {
     FontMapError(#[from] toml::de::Error),
     #[error("unrecognized font '{0}' in font map")]
     UnknownFont(String),
+    #[error("tried to use font without a corresponding mapping")]
+    UnmappedFont,
 }

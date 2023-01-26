@@ -167,18 +167,22 @@ impl<'a> LayoutBuilder<'a> {
         let default = &font_map.families["default"];
 
         // TODO: only load fonts that are defined in the map
-        let font_data = HashMap::from([
-            (Font::ROMAN, std::fs::read(default.roman.as_ref().unwrap())?),
-            (
-                Font::ITALIC,
-                std::fs::read(default.italic.as_ref().unwrap())?,
-            ),
-            (Font::BOLD, std::fs::read(default.bold.as_ref().unwrap())?),
-            (
-                Font::BOLD_ITALIC,
-                std::fs::read(default.bold_italic.as_ref().unwrap())?,
-            ),
-        ]);
+        let mut font_data = HashMap::new();
+        if let Some(p) = &default.roman {
+            font_data.insert(Font::ROMAN, std::fs::read(p)?);
+        }
+
+        if let Some(p) = &default.italic {
+            font_data.insert(Font::ITALIC, std::fs::read(p)?);
+        }
+
+        if let Some(p) = &default.bold {
+            font_data.insert(Font::BOLD, std::fs::read(p)?);
+        }
+
+        if let Some(p) = &default.bold_italic {
+            font_data.insert(Font::BOLD_ITALIC, std::fs::read(p)?);
+        }
 
         Ok(Self {
             // Initialize the cursor at the document's top left corner.
@@ -196,7 +200,7 @@ impl<'a> LayoutBuilder<'a> {
         })
     }
 
-    pub fn build(mut self, doc: &'a Document) -> Layout {
+    pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
         for node in &doc.nodes {
             match node {
                 Node::Command(c) => match c {
@@ -207,25 +211,27 @@ impl<'a> LayoutBuilder<'a> {
                         parser::Alignment::Justify => self.params.alignment = Alignment::Justify,
                     },
                 },
-                Node::Paragraph(p) => self.handle_paragraph(p),
+                Node::Paragraph(p) => self.handle_paragraph(p)?,
             }
         }
 
-        Layout { pages: self.pages }
+        Ok(Layout { pages: self.pages })
     }
 
-    fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) {
+    fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) -> Result<(), BurroError> {
         if self.par_counter == 0 {
             self.cursor.x = self.params.margin_left;
         } else {
             self.cursor.x = self.params.margin_left + self.params.par_indent;
         }
 
-        self.handle_style_blocks(paragraph);
+        self.handle_style_blocks(paragraph)?;
         self.finish_paragraph();
         self.cursor.x = self.params.margin_left;
         self.cursor.y -= self.params.leading + self.params.pt_size + self.params.line_height;
         self.par_counter += 1;
+
+        Ok(())
     }
 
     fn finish_paragraph(&mut self) {
@@ -235,7 +241,7 @@ impl<'a> LayoutBuilder<'a> {
         self.pages.push(page);
     }
 
-    fn handle_style_blocks(&mut self, blocks: &'a [StyleBlock]) {
+    fn handle_style_blocks(&mut self, blocks: &'a [StyleBlock]) -> Result<(), BurroError> {
         for block in blocks {
             match block {
                 StyleBlock::Text(words) => {
@@ -245,9 +251,13 @@ impl<'a> LayoutBuilder<'a> {
                     //
                     // Then, once we know where the lines are,
                     // we can continue by adding a box for each glyph position.
-                    let font_data = &(self.font_data[&self.font].clone());
-                    let raw_face = ttf_parser::Face::parse(font_data, 0).unwrap();
-                    let face = rustybuzz::Face::from_face(raw_face).unwrap();
+                    let font_data = match self.font_data.get(&self.font) {
+                        Some(d) => d.clone(),
+                        None => return Err(BurroError::UnmappedFont),
+                    };
+
+                    let face = ttf_parser::Face::parse(&font_data, 0).unwrap();
+                    let face = rustybuzz::Face::from_face(face).unwrap();
 
                     let font_id = self
                         .font_map
@@ -290,16 +300,18 @@ impl<'a> LayoutBuilder<'a> {
                 }
                 StyleBlock::Bold(blocks) => {
                     self.font = self.font | Font::BOLD;
-                    self.handle_style_blocks(blocks);
+                    self.handle_style_blocks(blocks)?;
                     self.font = self.font - Font::BOLD;
                 }
                 StyleBlock::Italic(blocks) => {
                     self.font = self.font | Font::ITALIC;
-                    self.handle_style_blocks(blocks);
+                    self.handle_style_blocks(blocks)?;
                     self.font = self.font - Font::ITALIC;
                 }
             }
         }
+
+        Ok(())
     }
 
     fn emit_word(&mut self, word: &Word, page: &mut Page) {

@@ -25,7 +25,7 @@ pub fn run(path: &Path, font_map: &Path) -> Result<(), BurroError> {
     let tokens = lexer::lex(&contents);
     let doc = parser::parse_tokens(&tokens)?;
     let builder = LayoutBuilder::new(&fonts)?;
-    let layout = builder.build(&doc);
+    let layout = builder.build(&doc)?;
     let dest = get_destination(path);
     writer::write_pdf(&layout, &fonts, &dest);
     Ok(())
