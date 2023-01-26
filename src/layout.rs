@@ -125,6 +125,7 @@ struct BurroParams {
     page_height: f64,
     line_height: f64,
     font_family: String,
+    par_indent: f64,
 }
 
 struct Point2D {
@@ -140,6 +141,7 @@ pub struct LayoutBuilder<'a> {
     font_data: HashMap<Font, Vec<u8>>,
     font_map: &'a FontMap,
     current_line: Vec<Word<'a>>,
+    par_counter: usize,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -159,6 +161,7 @@ impl<'a> LayoutBuilder<'a> {
             page_height: inch * 11.0,
             space_width: pt_size / 4.,
             font_family: String::from("default"),
+            par_indent: 2. * pt_size,
         };
 
         let default = &font_map.families["default"];
@@ -189,6 +192,7 @@ impl<'a> LayoutBuilder<'a> {
             font_data,
             font_map,
             current_line: vec![],
+            par_counter: 0,
         })
     }
 
@@ -211,12 +215,17 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) {
-        self.cursor.x = self.params.margin_left;
+        if self.par_counter == 0 {
+            self.cursor.x = self.params.margin_left;
+        } else {
+            self.cursor.x = self.params.margin_left + self.params.par_indent;
+        }
 
         self.handle_style_blocks(paragraph);
         self.finish_paragraph();
         self.cursor.x = self.params.margin_left;
         self.cursor.y -= self.params.leading + self.params.pt_size + self.params.line_height;
+        self.par_counter += 1;
     }
 
     fn finish_paragraph(&mut self) {
