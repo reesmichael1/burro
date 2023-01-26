@@ -112,7 +112,6 @@ impl<'a> Word<'a> {
 }
 
 // All values are in points.
-#[allow(dead_code)]
 struct BurroParams {
     margin_top: f64,
     margin_bottom: f64,
@@ -263,6 +262,15 @@ impl<'a> LayoutBuilder<'a> {
 
                             self.cursor.x = self.params.margin_left;
                             self.cursor.y -= self.params.leading + self.params.pt_size;
+                            if self.cursor.y < self.params.margin_bottom {
+                                let final_page = std::mem::replace(&mut page, Page::new());
+                                self.pages.push(final_page);
+
+                                self.cursor.y = self.params.page_height
+                                    - (self.params.margin_top
+                                        + self.params.pt_size
+                                        + self.params.leading);
+                            }
 
                             current_line = vec![last_word];
                         }
@@ -300,7 +308,7 @@ impl<'a> LayoutBuilder<'a> {
             });
 
             self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size);
-            self.cursor.y += font_units_to_points(pos.y_advance, word.upem, word.pt_size);
+            self.cursor.y -= font_units_to_points(pos.y_advance, word.upem, word.pt_size);
         }
     }
 
