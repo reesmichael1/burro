@@ -20,4 +20,6 @@ pub enum BurroError {
     PDFError(#[from] printpdf::Error),
     #[error("invalid font map syntax")]
     BadFontMap,
+    #[error("could not find font map in source directory")]
+    UnfoundFontMap,
 }

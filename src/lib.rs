@@ -18,8 +18,8 @@ fn get_destination(path: &Path) -> PathBuf {
     path
 }
 
-pub fn run(path: &Path, font_map: &Path) -> Result<(), BurroError> {
-    let fonts = fontmap::parse(font_map)?;
+pub fn run(path: &Path, font_map: &Option<PathBuf>) -> Result<(), BurroError> {
+    let fonts = fontmap::parse(font_map, path)?;
 
     let contents = fs::read_to_string(path)?;
     let tokens = lexer::lex(&contents);

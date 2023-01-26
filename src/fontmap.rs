@@ -44,7 +44,9 @@ pub struct Fonts {
     pub bold_italic: Option<PathBuf>,
 }
 
-pub fn parse(path: &Path) -> Result<FontMap, BurroError> {
+pub fn parse(path: &Option<PathBuf>, bur_file: &Path) -> Result<FontMap, BurroError> {
+    let path = find_fontmap(path, bur_file)?;
+
     let contents = std::fs::read_to_string(path)?;
     let config: Value = toml::from_str(&contents)?;
     let mut families = HashMap::new();
@@ -93,4 +95,20 @@ fn parse_fonts(family: &toml::Value) -> Result<Fonts, BurroError> {
 
 fn load_fontmap_path(path: &Value) -> Result<Option<PathBuf>, BurroError> {
     Ok(Some(path.as_str().ok_or(BurroError::BadFontMap)?.into()))
+}
+
+fn find_fontmap(fontmap: &Option<PathBuf>, path: &Path) -> Result<PathBuf, BurroError> {
+    match fontmap {
+        Some(p) => Ok(p.clone()),
+        None => {
+            let mut path = PathBuf::from(path);
+            path.set_file_name("fontmap");
+
+            if path.exists() {
+                Ok(path)
+            } else {
+                Err(BurroError::UnfoundFontMap)
+            }
+        }
+    }
 }
