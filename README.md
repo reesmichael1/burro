@@ -20,11 +20,14 @@ It is also important that the user should have easy yet complete control over wh
 
 .align[justify]
 Hello world! This is an example .italic[Burro] document.
+
+.pt_size[18]
+
 ```
 
-For now, Burro requires a font map, telling it where to find font files for each family/font combination it encounters. 
+For now, Burro requires a font map, telling it where to find font files for each family/font combination it encounters. See `examples/fontmap` for the necessary syntax.
 
-Saved as `example.bur`, this file can be compiled with `burro example.bur`. The command will output `example.pdf`. 
+Saved as `example.bur`, this file can be compiled with `burro example.bur` (assuming the fontmap is stored next to `example.bur`). The command will output `example.pdf`. 
 
 ## Project History
 
