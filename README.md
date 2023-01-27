@@ -14,7 +14,8 @@ It is also important that the user should have easy yet complete control over wh
 
 ```
 .start
-
+; We don't have a title command yet, so we'll manually create a title
+; Lines beginning with ";" are commented out
 .align[center]
 .bold[Burro]
 

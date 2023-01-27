@@ -7,6 +7,7 @@ pub enum Token {
     CloseSquare,
     Newline,
     Reset,
+    // Comment,
 }
 
 // The first version of the lexer/parser was written in OCaml,
@@ -25,6 +26,11 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
         [']', rest @ ..] => {
             let mut remaining = lex_rest(&rest);
             remaining.insert(0, Token::CloseSquare);
+            return remaining;
+        }
+        ['\n', ';', rest @ ..] | ['\n', '\r', ';', rest @ ..] => {
+            let mut remaining = lex_rest(discard_comment(rest));
+            remaining.insert(0, Token::Newline);
             return remaining;
         }
         ['\n', rest @ ..] | ['\r', '\n', rest @ ..] => {
@@ -61,6 +67,14 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
             remaining.insert(0, Token::Word(s));
             return remaining;
         }
+    }
+}
+
+fn discard_comment(chars: &[char]) -> &[char] {
+    if let Some(ix) = chars.iter().position(|&c| c == '\n') {
+        &chars[ix + 1..]
+    } else {
+        &[]
     }
 }
 
@@ -202,5 +216,26 @@ mod tests {
         ];
 
         assert_eq!(expected, lex("a. b"));
+    }
+
+    #[test]
+    fn lexing_comments() {
+        let expected = vec![
+            Token::Word("a".to_string()),
+            Token::Newline,
+            Token::Word("c".to_string()),
+            Token::Space,
+            Token::Word(";".to_string()),
+            Token::Space,
+            Token::Word("d".to_string()),
+            Token::Newline,
+        ];
+
+        let input = "a
+; b
+c ; d
+; another one";
+
+        assert_eq!(expected, lex(input));
     }
 }

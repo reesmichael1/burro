@@ -212,26 +212,39 @@ fn parse_style_block_list(tokens: &[Token]) -> Result<(Vec<StyleBlock>, &[Token]
         [] => Ok((vec![], tokens)),
         _ => {
             let (block, rest) = parse_style_block(tokens)?;
-            let (mut nodes, remaining) = parse_style_block_list(rest)?;
-            nodes.insert(0, block);
-            Ok((nodes, remaining))
+            if let Some(block) = block {
+                let (mut nodes, remaining) = parse_style_block_list(rest)?;
+                nodes.insert(0, block);
+                Ok((nodes, remaining))
+            } else {
+                Ok((vec![], &[]))
+            }
         }
     }
 }
 
-fn parse_style_block(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseError> {
-    match tokens {
-        [Token::Word(word), rest @ ..] => parse_text(vec![TextUnit::Str(word.to_string())], rest),
-        [Token::Space, rest @ ..] => parse_text(vec![TextUnit::Space], rest),
+fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]), ParseError> {
+    let (block, rem) = match tokens {
+        [Token::Word(word), rest @ ..] => parse_text(vec![TextUnit::Str(word.to_string())], rest)?,
+        [Token::Space, rest @ ..] => parse_text(vec![TextUnit::Space], rest)?,
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
-            "bold" => parse_bold_command(rest),
-            "italic" => parse_italic_command(rest),
-            "pt_size" => parse_point_size(rest),
-            _ => Err(ParseError::UnknownCommand(cmd.to_string())),
+            "bold" => parse_bold_command(rest)?,
+            "italic" => parse_italic_command(rest)?,
+            "pt_size" => parse_point_size(rest)?,
+            _ => Err(ParseError::UnknownCommand(cmd.to_string()))?,
         },
-        [Token::Newline, rest @ ..] => parse_style_block(rest),
-        _ => Err(ParseError::InvalidStyleBlock),
-    }
+        [Token::Newline, rest @ ..] => {
+            if let (Some(block), rem) = parse_style_block(rest)? {
+                (block, rem)
+            } else {
+                return Ok((None, &[]));
+            }
+        }
+        [] => return Ok((None, &[])),
+        _ => return Err(ParseError::InvalidStyleBlock),
+    };
+
+    Ok((Some(block), rem))
 }
 
 fn parse_document(tokens: &[Token]) -> Result<(Document, &[Token]), ParseError> {
@@ -381,6 +394,21 @@ a .pt_size[14] b";
 
         let doc = parse_tokens(&lex(input))?;
         assert_eq!(expected, doc);
+
+        Ok(())
+    }
+
+    #[test]
+    fn comment_at_end() -> Result<(), ParseError> {
+        let input = ".start
+abc
+; comment to finish";
+
+        let expected = Document {
+            nodes: vec![Node::Paragraph(vec![words_to_text(&["abc"])])],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
 
         Ok(())
     }
