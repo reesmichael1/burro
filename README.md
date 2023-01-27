@@ -22,7 +22,7 @@ It is also important that the user should have easy yet complete control over wh
 Hello world! This is an example .italic[Burro] document.
 
 .pt_size[18]
-
+Now, this line has a larger point size than the preceding one.
 ```
 
 For now, Burro requires a font map, telling it where to find font files for each family/font combination it encounters. See `examples/fontmap` for the necessary syntax.
