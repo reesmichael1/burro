@@ -4,7 +4,7 @@ use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::parser;
-use crate::parser::{Command, Document, Node, StyleBlock, TextUnit};
+use crate::parser::{Command, Document, Node, StyleBlock, StyleChange, TextUnit};
 use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
@@ -166,7 +166,6 @@ impl<'a> LayoutBuilder<'a> {
 
         let default = &font_map.families["default"];
 
-        // TODO: only load fonts that are defined in the map
         let mut font_data = HashMap::new();
         if let Some(p) = &default.roman {
             font_data.insert(Font::ROMAN, std::fs::read(p)?);
@@ -215,6 +214,18 @@ impl<'a> LayoutBuilder<'a> {
             }
         }
 
+        // Don't emit a completely blank page that was only added because of a line break
+        if self
+            .pages
+            .last()
+            .expect("should have at least one page")
+            .boxes
+            .len()
+            == 0
+        {
+            self.pages.pop();
+        }
+
         Ok(Layout { pages: self.pages })
     }
 
@@ -228,7 +239,14 @@ impl<'a> LayoutBuilder<'a> {
         self.handle_style_blocks(paragraph)?;
         self.finish_paragraph();
         self.cursor.x = self.params.margin_left;
-        self.cursor.y -= self.params.leading + self.params.pt_size + self.params.line_height;
+
+        let mut page = self.pages.pop().expect("should have at least one page");
+        self.advance_y_cursor(
+            self.params.leading + self.params.pt_size + self.params.line_height,
+            &mut page,
+        );
+
+        self.pages.push(page);
         self.par_counter += 1;
 
         Ok(())
@@ -295,16 +313,10 @@ impl<'a> LayoutBuilder<'a> {
                             self.emit_line(current_line, &mut page, false);
 
                             self.cursor.x = self.params.margin_left;
-                            self.cursor.y -= self.params.leading + self.params.pt_size;
-                            if self.cursor.y < self.params.margin_bottom {
-                                let final_page = std::mem::replace(&mut page, Page::new());
-                                self.pages.push(final_page);
-
-                                self.cursor.y = self.params.page_height
-                                    - (self.params.margin_top
-                                        + self.params.pt_size
-                                        + self.params.leading);
-                            }
+                            self.advance_y_cursor(
+                                self.params.leading + self.params.pt_size,
+                                &mut page,
+                            );
 
                             current_line = vec![last_word];
                         }
@@ -323,10 +335,22 @@ impl<'a> LayoutBuilder<'a> {
                     self.handle_style_blocks(blocks)?;
                     self.font = self.font - Font::ITALIC;
                 }
+
+                StyleBlock::Command(change) => self.handle_style_change(change),
             }
         }
 
         Ok(())
+    }
+
+    fn handle_style_change(&mut self, change: &StyleChange) {
+        match change {
+            // To decide: do we want to automatically change the leading,
+            // or ask the user to change it themselves?
+            // Perhaps if the leading has been explicitly set, then leave it alone,
+            // and otherwise change it automatically?
+            StyleChange::PtSize(size) => self.params.pt_size = *size as f64,
+        }
     }
 
     fn emit_word(&mut self, word: &Word, page: &mut Page) {
@@ -340,11 +364,14 @@ impl<'a> LayoutBuilder<'a> {
                 },
                 id: glyph.glyph_id,
                 font: word.font_id,
-                pts: self.params.pt_size,
+                pts: word.pt_size,
             });
 
             self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size);
-            self.cursor.y -= font_units_to_points(pos.y_advance, word.upem, word.pt_size);
+            let delta_y = font_units_to_points(pos.y_advance, word.upem, word.pt_size);
+            if delta_y > 0. {
+                self.advance_y_cursor(delta_y, page);
+            }
         }
     }
 
@@ -355,14 +382,31 @@ impl<'a> LayoutBuilder<'a> {
 
         let mut line = line;
         if !last {
-            // This unwrap should never panic
-            // since the line is guaranteed to have at least one element
-            while line.last().unwrap().is_space() {
+            while line
+                .last()
+                .expect("should have at least one element in the line")
+                .is_space()
+            {
                 line.pop();
                 if line.len() == 0 {
                     return;
                 }
             }
+        }
+
+        let starting_size = line
+            .first()
+            .expect("should have at least one element in the line")
+            .pt_size;
+        let max_size = line
+            .iter()
+            .map(|w| crate::util::OrdFloat { val: w.pt_size })
+            .max()
+            .expect("should have at least one element in the line")
+            .val;
+
+        if max_size > starting_size {
+            self.advance_y_cursor(max_size - starting_size, page);
         }
 
         match self.params.alignment {
@@ -424,6 +468,17 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
+    fn advance_y_cursor(&mut self, delta_y: f64, page: &mut Page) {
+        self.cursor.y -= delta_y;
+        if self.cursor.y < self.params.margin_bottom {
+            let final_page = std::mem::replace(page, Page::new());
+            self.pages.push(final_page);
+
+            self.cursor.y = self.params.page_height
+                - (self.params.margin_top + self.params.pt_size + self.params.leading);
+        }
+    }
+
     fn total_line_width(&self, line: &[Word]) -> f64 {
         if line.len() == 0 {
             return 0.;
@@ -439,8 +494,11 @@ impl<'a> LayoutBuilder<'a> {
             .filter(|w| *w.contents == TextUnit::Space)
             .count();
 
-        // This unwrap should never panic since the line is guaranteed to have at least one element
-        if line.last().unwrap().is_space() {
+        if line
+            .last()
+            .expect("should have at least one element in the line")
+            .is_space()
+        {
             space_count -= 1;
         }
         let space_width = self.params.space_width * space_count as f64;

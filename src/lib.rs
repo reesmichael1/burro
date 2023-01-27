@@ -4,6 +4,7 @@ mod fonts;
 mod layout;
 mod lexer;
 mod parser;
+mod util;
 mod writer;
 
 pub use error::BurroError;

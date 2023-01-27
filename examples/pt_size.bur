@@ -1,0 +1,5 @@
+.start
+This is an example of a text that will change point size in the middle of one of its lines. We want to be sure that the change will take place after a line break, so here are lots of words to get us off of the first line. .pt_size[24] Now, the text should be twice as big as before. Wow! .pt_size[12] And now, it should be back to the original size.
+
+.pt_size[18]
+Now that we're in a new paragraph, we should see a different point size as well.

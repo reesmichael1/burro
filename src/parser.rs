@@ -19,7 +19,13 @@ pub enum Command {
 pub enum StyleBlock {
     Bold(Vec<StyleBlock>),
     Italic(Vec<StyleBlock>),
+    Command(StyleChange),
     Text(Vec<TextUnit>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum StyleChange {
+    PtSize(u16),
 }
 
 #[derive(Debug, PartialEq)]
@@ -65,6 +71,15 @@ pub enum ParseError {
     InvalidStyleBlock,
     #[error("expected to find more tokens, found EOF instead")]
     EndedEarly,
+    #[error("malformed pt_size command")]
+    MalformedPtSize,
+}
+
+fn pop_spaces(tokens: &[Token]) -> &[Token] {
+    match tokens {
+        [Token::Space, rest @ ..] => pop_spaces(rest),
+        _ => tokens,
+    }
 }
 
 fn parse_node_list(tokens: &[Token]) -> Result<(Vec<Node>, &[Token]), ParseError> {
@@ -174,6 +189,22 @@ fn parse_italic_command(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), Pars
     }
 }
 
+fn parse_point_size(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseError> {
+    match tokens {
+        [Token::OpenSquare, Token::Word(size), Token::CloseSquare, rest @ ..] => {
+            let size = size
+                .parse::<u16>()
+                .map_err(|_| ParseError::MalformedPtSize)?;
+
+            Ok((
+                StyleBlock::Command(StyleChange::PtSize(size)),
+                pop_spaces(rest),
+            ))
+        }
+        _ => Err(ParseError::MalformedPtSize),
+    }
+}
+
 fn parse_style_block_list(tokens: &[Token]) -> Result<(Vec<StyleBlock>, &[Token]), ParseError> {
     match tokens {
         [Token::CloseSquare, rest @ ..] => Ok((vec![], rest)),
@@ -195,8 +226,10 @@ fn parse_style_block(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseEr
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
             "bold" => parse_bold_command(rest),
             "italic" => parse_italic_command(rest),
+            "pt_size" => parse_point_size(rest),
             _ => Err(ParseError::UnknownCommand(cmd.to_string())),
         },
+        [Token::Newline, rest @ ..] => parse_style_block(rest),
         _ => Err(ParseError::InvalidStyleBlock),
     }
 }
@@ -324,6 +357,25 @@ a.bold[b]c";
                 words_to_text(&["a"]),
                 StyleBlock::Bold(vec![words_to_text(&["b"])]),
                 words_to_text(&["c"]),
+            ])],
+        };
+
+        let doc = parse_tokens(&lex(input))?;
+        assert_eq!(expected, doc);
+
+        Ok(())
+    }
+
+    #[test]
+    fn midline_style_change() -> Result<(), ParseError> {
+        let input = ".start
+a .pt_size[14] b";
+
+        let expected = Document {
+            nodes: vec![Node::Paragraph(vec![
+                words_to_text_sp(&["a"]),
+                StyleBlock::Command(StyleChange::PtSize(14)),
+                words_to_text(&["b"]),
             ])],
         };
 
