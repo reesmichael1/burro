@@ -8,6 +8,7 @@ pub enum Alignment {
     Center,
     Right,
     Justify,
+    Reset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -164,6 +165,9 @@ fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseErr
                 "justify" => Ok((Command::Align(Alignment::Justify), rest)),
                 _ => Err(ParseError::InvalidAlign(align.to_string())),
             }
+        }
+        [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
+            Ok((Command::Align(Alignment::Reset), rest))
         }
         _ => Err(ParseError::MalformedAlign),
     }

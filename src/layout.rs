@@ -142,6 +142,7 @@ pub struct LayoutBuilder<'a> {
     font_map: &'a FontMap,
     current_line: Vec<Word<'a>>,
     par_counter: usize,
+    alignments: Vec<Alignment>,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -196,7 +197,13 @@ impl<'a> LayoutBuilder<'a> {
             font_map,
             current_line: vec![],
             par_counter: 0,
+            alignments: vec![],
         })
+    }
+
+    fn set_alignment(&mut self, alignment: Alignment) {
+        let current = std::mem::replace(&mut self.params.alignment, alignment);
+        self.alignments.push(current);
     }
 
     pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
@@ -204,10 +211,17 @@ impl<'a> LayoutBuilder<'a> {
             match node {
                 Node::Command(c) => match c {
                     Command::Align(dir) => match dir {
-                        parser::Alignment::Left => self.params.alignment = Alignment::Left,
-                        parser::Alignment::Right => self.params.alignment = Alignment::Right,
-                        parser::Alignment::Center => self.params.alignment = Alignment::Center,
-                        parser::Alignment::Justify => self.params.alignment = Alignment::Justify,
+                        parser::Alignment::Left => self.set_alignment(Alignment::Left),
+                        parser::Alignment::Right => self.set_alignment(Alignment::Right),
+                        parser::Alignment::Center => self.set_alignment(Alignment::Center),
+                        parser::Alignment::Justify => self.set_alignment(Alignment::Justify),
+                        parser::Alignment::Reset => {
+                            if let Some(alignment) = self.alignments.pop() {
+                                self.params.alignment = alignment;
+                            } else {
+                                return Err(BurroError::EmptyReset);
+                            }
+                        }
                     },
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,

@@ -22,4 +22,6 @@ pub enum BurroError {
     BadFontMap,
     #[error("could not find font map in source directory")]
     UnfoundFontMap,
+    #[error("used reset command without any previous state")]
+    EmptyReset,
 }

@@ -1,0 +1,6 @@
+.start
+.align[center]
+This line should be centered.
+
+.align[-]
+This line should be reset to the alignment before the last explicit align command, i\.e\., it should be justified.
