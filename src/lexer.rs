@@ -7,7 +7,6 @@ pub enum Token {
     CloseSquare,
     Newline,
     Reset,
-    // Comment,
 }
 
 // The first version of the lexer/parser was written in OCaml,
@@ -29,9 +28,12 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
             return remaining;
         }
         ['\n', ';', rest @ ..] | ['\n', '\r', ';', rest @ ..] => {
-            let mut remaining = lex_rest(discard_comment(rest));
-            remaining.insert(0, Token::Newline);
-            return remaining;
+            let mut remaining = discard_comment(rest);
+            while remaining.len() > 0 && remaining[0] == ';' {
+                remaining = discard_comment(&remaining);
+            }
+
+            return lex_rest(discard_comment(remaining));
         }
         ['\n', rest @ ..] | ['\r', '\n', rest @ ..] => {
             let mut remaining = lex_rest(&rest);
@@ -72,7 +74,7 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
 
 fn discard_comment(chars: &[char]) -> &[char] {
     if let Some(ix) = chars.iter().position(|&c| c == '\n') {
-        &chars[ix + 1..]
+        &chars[ix..]
     } else {
         &[]
     }
@@ -228,12 +230,12 @@ mod tests {
             Token::Word(";".to_string()),
             Token::Space,
             Token::Word("d".to_string()),
-            Token::Newline,
         ];
 
         let input = "a
 ; b
 c ; d
+; one comment
 ; another one";
 
         assert_eq!(expected, lex(input));

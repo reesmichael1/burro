@@ -412,4 +412,19 @@ abc
 
         Ok(())
     }
+
+    #[test]
+    fn multiple_comments() -> Result<(), ParseError> {
+        let input = ".start
+; first comment
+; second comment
+hello";
+
+        let expected = Document {
+            nodes: vec![Node::Paragraph(vec![words_to_text(&["hello"])])],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
 }

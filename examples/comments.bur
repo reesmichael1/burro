@@ -1,4 +1,8 @@
 .start
 ; This line is commented out
-This should be the first thing you see in this document. There's another line above it in the source file, but it's commented out, so it shouldn't make it into the output. There's another one below that we shouldn't see as well.
+This should be the first thing you see in this document; there's another line above it in the source file, but it's commented out, so it shouldn't make it into the output. There are more below that we shouldn't see as well.
 ; There also shouldn't be anything below this line
+; Aren't comments fun?
+; For example, you can have lots of comments explaining your typographic approach,
+; general reflections on your writing process, or passages you remove while revising.
+; The world is your oyster!
