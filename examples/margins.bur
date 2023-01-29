@@ -1,0 +1,6 @@
+.margins[3in]
+.start
+This line should be much deeper into the page and much narrower than the default lines, because we've changed our margins to 3 inches instead of the default 1 inch. Notice how this only leaves us with 2.5 inches in the middle column! Therefore, our measure is far too low.
+
+.margins[1in]
+At this point, we should be back to our normal margin of 1 inch all the way around. Note how this change happens mid-page. This is part of how we'll allow typographers to have control over where the text goes on the page.

@@ -1,3 +1,5 @@
+use lazy_static::lazy_static;
+use regex::Regex;
 use thiserror::Error;
 
 use crate::lexer::Token;
@@ -14,6 +16,7 @@ pub enum Alignment {
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Align(Alignment),
+    Margins(f64),
 }
 
 #[derive(Debug, PartialEq)]
@@ -44,6 +47,26 @@ pub enum Node {
 #[derive(Debug, PartialEq)]
 pub struct Document {
     pub nodes: Vec<Node>,
+    pub config: DocConfig,
+}
+
+#[derive(Default, Debug, PartialEq)]
+pub struct DocConfig {
+    pub margins: Option<f64>,
+}
+
+// These are true "commands," i.e., they should not happen inside of a paragraph.
+const COMMAND_NAMES: [&str; 2] = ["margins", "align"];
+
+impl DocConfig {
+    fn build() -> Self {
+        Self::default()
+    }
+
+    fn with_margins(mut self, margins: f64) -> Self {
+        self.margins = Some(margins);
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -60,7 +83,7 @@ pub enum ParseError {
     UnescapedCloseBrace,
     #[error("encountered unescaped -")]
     UnescapedHyphen,
-    #[error("unknown command: {0}")]
+    #[error("unknown command: '{0}'")]
     UnknownCommand(String),
     #[error("malformed align command")]
     MalformedAlign,
@@ -74,6 +97,16 @@ pub enum ParseError {
     EndedEarly,
     #[error("malformed pt_size command")]
     MalformedPtSize,
+    #[error("malformed int command with integer argument")]
+    MalformedIntCommand,
+    #[error("invalid command encountered in document configuration")]
+    InvalidConfiguration,
+    #[error("invalid value {0} encountered when integer expected")]
+    InvalidInt(String),
+    #[error("invalid unit {0} encountered as measurement")]
+    InvalidUnit(String),
+    #[error("malformed margins command")]
+    MalformedMargins,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -92,9 +125,9 @@ fn parse_node_list(tokens: &[Token]) -> Result<(Vec<Node>, &[Token]), ParseError
     }
 
     match tokens {
-        [Token::Command(name), rest @ ..] => {
-            if name == "align" {
-                let (cmd, remaining) = parse_command(name.to_string(), rest)?;
+        [Token::Command(name), ..] => {
+            if COMMAND_NAMES.contains(&name.as_ref()) {
+                let (cmd, remaining) = parse_command(name.to_string(), tokens)?;
                 let (mut nodes, last) = parse_node_list(remaining)?;
                 nodes.insert(0, cmd);
                 Ok((nodes, last))
@@ -122,12 +155,17 @@ fn parse_paragraph(tokens: &[Token]) -> Result<(Node, &[Token]), ParseError> {
     }
 }
 
+fn into_node(
+    input: Result<(Command, &[Token]), ParseError>,
+) -> Result<(Node, &[Token]), ParseError> {
+    let (command, rem) = input?;
+    Ok((Node::Command(command), rem))
+}
+
 fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), ParseError> {
     match name.as_ref() {
-        "align" => {
-            let (align, rest) = parse_align_command(tokens)?;
-            Ok((Node::Command(align), rest))
-        }
+        "align" => into_node(parse_align_command(tokens)),
+        "margins" => into_node(parse_margins_command(tokens)),
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -157,7 +195,11 @@ fn parse_text(
 
 fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseError> {
     match tokens {
-        [Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] => {
+        [Token::Command(name), Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] =>
+        {
+            if name != "align" {
+                return Err(ParseError::MalformedAlign);
+            }
             match align.as_ref() {
                 "left" => Ok((Command::Align(Alignment::Left), rest)),
                 "right" => Ok((Command::Align(Alignment::Right), rest)),
@@ -251,12 +293,87 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
     Ok((Some(block), rem))
 }
 
+fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
+    let mut tokens = tokens;
+    let mut config = DocConfig::default();
+    loop {
+        match &tokens[0] {
+            Token::Command(name) => match name.as_ref() {
+                "start" => return Ok((config, tokens)),
+                _ => {
+                    let (command, rem) = parse_command(name.to_string(), tokens)?;
+
+                    match command {
+                        Node::Command(Command::Margins(dim)) => config = config.with_margins(dim),
+                        _ => return Err(ParseError::Unimplemented),
+                    }
+
+                    tokens = rem;
+                }
+            },
+            Token::Newline => tokens = &tokens[1..],
+            _ => return Err(ParseError::InvalidConfiguration),
+        }
+    }
+}
+
+// Internally, we keep everything in points,
+// but we want to accept arguments in many units:
+// points, picas, millimeters, inches, etc.
+// (We'll add more units as needed.)
+fn parse_unit(input: &str) -> Result<f64, ParseError> {
+    lazy_static! {
+        static ref RE: Regex = Regex::new(r"^(?P<num>[\d\.]+)(?P<unit>\w*)$").unwrap();
+    }
+    let caps = RE.captures(input).unwrap();
+    let num = caps.name("num").unwrap();
+    let num = num
+        .as_str()
+        .parse::<f64>()
+        .map_err(|_| ParseError::InvalidInt(input.to_string()))?;
+
+    if let Some(unit) = caps.name("unit") {
+        match unit.as_str() {
+            "pt" => Ok(num),
+            "in" => Ok(72. * num),
+            "mm" => Ok(2.83464576 * num),
+            "P" => Ok(12. * num),
+            "" => Ok(num),
+            _ => Err(ParseError::InvalidUnit(unit.as_str().to_string())),
+        }
+    } else {
+        Ok(num)
+    }
+}
+
+fn parse_margins_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(name), Token::OpenSquare, Token::Word(unit), Token::CloseSquare, rest @ ..] =>
+        {
+            if name != "margins" {
+                return Err(ParseError::MalformedMargins);
+            }
+            Ok((Command::Margins(parse_unit(&unit)?), rest))
+        }
+        _ => Err(ParseError::MalformedMargins),
+    }
+}
+
 fn parse_document(tokens: &[Token]) -> Result<(Document, &[Token]), ParseError> {
     if tokens.len() > 0 && tokens[0] == Token::Command("start".to_string()) {
         let (nodes, rest) = parse_node_list(&tokens[1..])?;
-        Ok((Document { nodes }, rest))
+        Ok((
+            Document {
+                config: DocConfig::build(),
+                nodes,
+            },
+            rest,
+        ))
     } else {
-        Err(ParseError::Unimplemented)
+        let (config, rest) = parse_config(&tokens)?;
+        assert!(rest[0] == Token::Command("start".to_string()));
+        let (nodes, rest) = parse_node_list(&rest[1..])?;
+        Ok((Document { config, nodes }, rest))
     }
 }
 
@@ -272,6 +389,8 @@ pub fn parse_tokens(tokens: &[Token]) -> Result<Document, ParseError> {
 mod tests {
     use super::*;
     use crate::lexer::lex;
+
+    use assert_float_eq::*;
 
     fn words_to_text(words: &[&str]) -> StyleBlock {
         let mut converted = vec![];
@@ -304,6 +423,7 @@ mod tests {
     #[test]
     fn basic_parsing() -> Result<(), ParseError> {
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![
                 Node::Command(Command::Align(Alignment::Center)),
                 Node::Paragraph(vec![words_to_text(&["This", "is", "a", "text", "node."])]),
@@ -324,6 +444,7 @@ This is a text node.";
     #[test]
     fn nested_style_blocks() -> Result<(), ParseError> {
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![
                 StyleBlock::Bold(vec![
                     words_to_text_sp(&["Bold"]),
@@ -352,6 +473,7 @@ paragraph
 second paragraph";
 
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![
                 Node::Paragraph(vec![words_to_text(&["first", "paragraph"])]),
                 Node::Paragraph(vec![words_to_text(&["second", "paragraph"])]),
@@ -370,6 +492,7 @@ second paragraph";
 a.bold[b]c";
 
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![
                 words_to_text(&["a"]),
                 StyleBlock::Bold(vec![words_to_text(&["b"])]),
@@ -389,11 +512,37 @@ a.bold[b]c";
 a .pt_size[14] b";
 
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![
                 words_to_text_sp(&["a"]),
                 StyleBlock::Command(StyleChange::PtSize(14)),
                 words_to_text(&["b"]),
             ])],
+        };
+
+        let doc = parse_tokens(&lex(input))?;
+        assert_eq!(expected, doc);
+
+        Ok(())
+    }
+
+    #[test]
+    fn mid_doc_style_change() -> Result<(), ParseError> {
+        let input = ".start
+a 
+
+.pt_size[14] 
+b";
+
+        let expected = Document {
+            config: DocConfig::build(),
+            nodes: vec![
+                Node::Paragraph(vec![words_to_text_sp(&["a"])]),
+                Node::Paragraph(vec![
+                    StyleBlock::Command(StyleChange::PtSize(14)),
+                    words_to_text(&["b"]),
+                ]),
+            ],
         };
 
         let doc = parse_tokens(&lex(input))?;
@@ -409,6 +558,7 @@ abc
 ; comment to finish";
 
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![words_to_text(&["abc"])])],
         };
 
@@ -425,10 +575,78 @@ abc
 hello";
 
         let expected = Document {
+            config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![words_to_text(&["hello"])])],
         };
 
         assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn document_configuration() -> Result<(), ParseError> {
+        let input = ".margins[2in]
+.start
+Hello world!";
+
+        let expected = Document {
+            config: DocConfig::build().with_margins(144.0),
+            nodes: vec![Node::Paragraph(vec![words_to_text(&["Hello", "world!"])])],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn midline_command() -> Result<(), ParseError> {
+        let input = ".start
+a
+
+.margins[2in]
+b";
+
+        let expected = Document {
+            config: DocConfig::default(),
+            nodes: vec![
+                Node::Paragraph(vec![words_to_text(&["a"])]),
+                Node::Command(Command::Margins(144.)),
+                Node::Paragraph(vec![words_to_text(&["b"])]),
+            ],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn unit_conversion_default_points() -> Result<(), ParseError> {
+        assert_eq!(12.0, parse_unit("12")?);
+        Ok(())
+    }
+
+    #[test]
+    fn unit_conversion_explicit_points() -> Result<(), ParseError> {
+        assert_eq!(14.0, parse_unit("14pt")?);
+        Ok(())
+    }
+
+    #[test]
+    fn unit_conversion_picas() -> Result<(), ParseError> {
+        assert_eq!(30.0, parse_unit("2.5P")?);
+        Ok(())
+    }
+
+    #[test]
+    fn unit_conversion_inches() -> Result<(), ParseError> {
+        assert_eq!(36.0, parse_unit("0.5in")?);
+        Ok(())
+    }
+
+    #[test]
+    fn unit_conversion_millimeters() -> Result<(), ParseError> {
+        assert_f64_near!(28.3464576, parse_unit("10mm")?);
         Ok(())
     }
 }

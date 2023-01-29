@@ -4,7 +4,7 @@ use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::parser;
-use crate::parser::{Command, Document, Node, StyleBlock, StyleChange, TextUnit};
+use crate::parser::{Command, DocConfig, Document, Node, StyleBlock, StyleChange, TextUnit};
 use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
@@ -206,7 +206,26 @@ impl<'a> LayoutBuilder<'a> {
         self.alignments.push(current);
     }
 
+    fn set_cursor_top_left(&mut self) {
+        self.cursor.x = self.params.margin_left;
+        self.cursor.y = self.params.page_height
+            - (self.params.margin_top + self.params.pt_size + self.params.leading);
+    }
+
+    fn apply_config(&mut self, config: &DocConfig) {
+        if let Some(margin) = config.margins {
+            self.params.margin_bottom = margin;
+            self.params.margin_top = margin;
+            self.params.margin_left = margin;
+            self.params.margin_right = margin;
+
+            self.set_cursor_top_left();
+        }
+    }
+
     pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
+        self.apply_config(&doc.config);
+
         for node in &doc.nodes {
             match node {
                 Node::Command(c) => match c {
@@ -223,6 +242,12 @@ impl<'a> LayoutBuilder<'a> {
                             }
                         }
                     },
+                    Command::Margins(dim) => {
+                        self.params.margin_bottom = *dim;
+                        self.params.margin_top = *dim;
+                        self.params.margin_left = *dim;
+                        self.params.margin_right = *dim;
+                    }
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
             }
