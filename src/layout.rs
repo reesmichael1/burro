@@ -4,7 +4,9 @@ use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::parser;
-use crate::parser::{Command, DocConfig, Document, Node, StyleBlock, StyleChange, TextUnit};
+use crate::parser::{
+    Command, DocConfig, Document, Node, ResetArg, StyleBlock, StyleChange, TextUnit,
+};
 use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
@@ -143,6 +145,7 @@ pub struct LayoutBuilder<'a> {
     current_line: Vec<Word<'a>>,
     par_counter: usize,
     alignments: Vec<Alignment>,
+    margins: Vec<f64>,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -198,12 +201,23 @@ impl<'a> LayoutBuilder<'a> {
             current_line: vec![],
             par_counter: 0,
             alignments: vec![],
+            margins: vec![],
         })
     }
 
     fn set_alignment(&mut self, alignment: Alignment) {
         let current = std::mem::replace(&mut self.params.alignment, alignment);
         self.alignments.push(current);
+    }
+
+    fn set_all_margins(&mut self, value: f64) {
+        // TODO: What to do when individual margins can be set?
+        // We'll need to track that separately for the reset command.
+        let previous = std::mem::replace(&mut self.params.margin_bottom, value);
+        self.margins.push(previous);
+        self.params.margin_top = value;
+        self.params.margin_left = value;
+        self.params.margin_right = value;
     }
 
     fn set_cursor_top_left(&mut self) {
@@ -229,12 +243,15 @@ impl<'a> LayoutBuilder<'a> {
         for node in &doc.nodes {
             match node {
                 Node::Command(c) => match c {
-                    Command::Align(dir) => match dir {
-                        parser::Alignment::Left => self.set_alignment(Alignment::Left),
-                        parser::Alignment::Right => self.set_alignment(Alignment::Right),
-                        parser::Alignment::Center => self.set_alignment(Alignment::Center),
-                        parser::Alignment::Justify => self.set_alignment(Alignment::Justify),
-                        parser::Alignment::Reset => {
+                    Command::Align(arg) => match arg {
+                        ResetArg::Explicit(dir) => match dir {
+                            parser::Alignment::Left => self.set_alignment(Alignment::Left),
+                            parser::Alignment::Right => self.set_alignment(Alignment::Right),
+                            parser::Alignment::Center => self.set_alignment(Alignment::Center),
+                            parser::Alignment::Justify => self.set_alignment(Alignment::Justify),
+                        },
+
+                        ResetArg::Reset => {
                             if let Some(alignment) = self.alignments.pop() {
                                 self.params.alignment = alignment;
                             } else {
@@ -242,12 +259,22 @@ impl<'a> LayoutBuilder<'a> {
                             }
                         }
                     },
-                    Command::Margins(dim) => {
-                        self.params.margin_bottom = *dim;
-                        self.params.margin_top = *dim;
-                        self.params.margin_left = *dim;
-                        self.params.margin_right = *dim;
-                    }
+                    Command::Margins(arg) => match arg {
+                        ResetArg::Explicit(dim) => {
+                            self.set_all_margins(*dim);
+                        }
+
+                        ResetArg::Reset => {
+                            if let Some(margins) = self.margins.pop() {
+                                self.params.margin_bottom = margins;
+                                self.params.margin_top = margins;
+                                self.params.margin_left = margins;
+                                self.params.margin_right = margins;
+                            } else {
+                                return Err(BurroError::EmptyReset);
+                            }
+                        }
+                    },
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
             }

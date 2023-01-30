@@ -10,13 +10,18 @@ pub enum Alignment {
     Center,
     Right,
     Justify,
-    Reset,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum Command {
-    Align(Alignment),
-    Margins(f64),
+    Align(ResetArg<Alignment>),
+    Margins(ResetArg<f64>),
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ResetArg<T> {
+    Explicit(T),
+    Reset,
 }
 
 #[derive(Debug, PartialEq)]
@@ -201,15 +206,15 @@ fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseErr
                 return Err(ParseError::MalformedAlign);
             }
             match align.as_ref() {
-                "left" => Ok((Command::Align(Alignment::Left), rest)),
-                "right" => Ok((Command::Align(Alignment::Right), rest)),
-                "center" => Ok((Command::Align(Alignment::Center), rest)),
-                "justify" => Ok((Command::Align(Alignment::Justify), rest)),
+                "left" => Ok((Command::Align(ResetArg::Explicit(Alignment::Left)), rest)),
+                "right" => Ok((Command::Align(ResetArg::Explicit(Alignment::Right)), rest)),
+                "center" => Ok((Command::Align(ResetArg::Explicit(Alignment::Center)), rest)),
+                "justify" => Ok((Command::Align(ResetArg::Explicit(Alignment::Justify)), rest)),
                 _ => Err(ParseError::InvalidAlign(align.to_string())),
             }
         }
         [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
-            Ok((Command::Align(Alignment::Reset), rest))
+            Ok((Command::Align(ResetArg::Reset), rest))
         }
         _ => Err(ParseError::MalformedAlign),
     }
@@ -304,7 +309,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                     let (command, rem) = parse_command(name.to_string(), tokens)?;
 
                     match command {
-                        Node::Command(Command::Margins(dim)) => config = config.with_margins(dim),
+                        Node::Command(Command::Margins(ResetArg::Explicit(dim))) => {
+                            config = config.with_margins(dim)
+                        }
                         _ => return Err(ParseError::Unimplemented),
                     }
 
@@ -353,7 +360,16 @@ fn parse_margins_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseE
             if name != "margins" {
                 return Err(ParseError::MalformedMargins);
             }
-            Ok((Command::Margins(parse_unit(&unit)?), rest))
+            Ok((
+                Command::Margins(ResetArg::Explicit(parse_unit(&unit)?)),
+                rest,
+            ))
+        }
+        [Token::Command(name), Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
+            if name != "margins" {
+                return Err(ParseError::MalformedMargins);
+            }
+            Ok((Command::Margins(ResetArg::Reset), rest))
         }
         _ => Err(ParseError::MalformedMargins),
     }
@@ -425,7 +441,7 @@ mod tests {
         let expected = Document {
             config: DocConfig::build(),
             nodes: vec![
-                Node::Command(Command::Align(Alignment::Center)),
+                Node::Command(Command::Align(ResetArg::Explicit(Alignment::Center))),
                 Node::Paragraph(vec![words_to_text(&["This", "is", "a", "text", "node."])]),
             ],
         };
@@ -610,7 +626,7 @@ b";
             config: DocConfig::default(),
             nodes: vec![
                 Node::Paragraph(vec![words_to_text(&["a"])]),
-                Node::Command(Command::Margins(144.)),
+                Node::Command(Command::Margins(ResetArg::Explicit(144.))),
                 Node::Paragraph(vec![words_to_text(&["b"])]),
             ],
         };

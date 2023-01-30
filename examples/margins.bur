@@ -4,3 +4,6 @@ This line should be much deeper into the page and much narrower than the default
 
 .margins[1in]
 At this point, we should be back to our normal margin of 1 inch all the way around. Note how this change happens mid-page. This is part of how we'll allow typographers to have control over where the text goes on the page.
+
+.margins[-]
+Now, we should be back to the narrow margins from before. We did this via \-, the reset command, which puts whatever command we used back to its previous value (before the last change).
