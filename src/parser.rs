@@ -16,6 +16,8 @@ pub enum Alignment {
 pub enum Command {
     Align(ResetArg<Alignment>),
     Margins(ResetArg<f64>),
+    PageWidth(ResetArg<f64>),
+    PageHeight(ResetArg<f64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -62,7 +64,7 @@ pub struct DocConfig {
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 2] = ["margins", "align"];
+const COMMAND_NAMES: [&str; 4] = ["margins", "align", "page_width", "page_height"];
 
 impl DocConfig {
     fn build() -> Self {
@@ -108,16 +110,14 @@ pub enum ParseError {
     EndedEarly,
     #[error("malformed pt_size command")]
     MalformedPtSize,
-    #[error("malformed int command with integer argument")]
-    MalformedIntCommand,
+    #[error("malformed command with measure unit argument")]
+    MalformedUnitCommand,
     #[error("invalid command encountered in document configuration")]
     InvalidConfiguration,
     #[error("invalid value {0} encountered when integer expected")]
     InvalidInt(String),
     #[error("invalid unit {0} encountered as measurement")]
     InvalidUnit(String),
-    #[error("malformed margins command")]
-    MalformedMargins,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -176,7 +176,18 @@ fn into_node(
 fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), ParseError> {
     match name.as_ref() {
         "align" => into_node(parse_align_command(tokens)),
-        "margins" => into_node(parse_margins_command(tokens)),
+        "margins" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::Margins(arg)), rem))
+        }
+        "page_width" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::PageWidth(arg)), rem))
+        }
+        "page_height" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::PageHeight(arg)), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -377,25 +388,15 @@ fn parse_unit(input: &str) -> Result<f64, ParseError> {
     }
 }
 
-fn parse_margins_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseError> {
+fn parse_unit_command(tokens: &[Token]) -> Result<(ResetArg<f64>, &[Token]), ParseError> {
     match tokens {
-        [Token::Command(name), Token::OpenSquare, Token::Word(unit), Token::CloseSquare, rest @ ..] =>
-        {
-            if name != "margins" {
-                return Err(ParseError::MalformedMargins);
-            }
-            Ok((
-                Command::Margins(ResetArg::Explicit(parse_unit(&unit)?)),
-                rest,
-            ))
+        [Token::Command(_), Token::OpenSquare, Token::Word(unit), Token::CloseSquare, rest @ ..] => {
+            Ok((ResetArg::Explicit(parse_unit(&unit)?), rest))
         }
-        [Token::Command(name), Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
-            if name != "margins" {
-                return Err(ParseError::MalformedMargins);
-            }
-            Ok((Command::Margins(ResetArg::Reset), rest))
+        [Token::Command(_), Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
+            Ok((ResetArg::Reset, rest))
         }
-        _ => Err(ParseError::MalformedMargins),
+        _ => Err(ParseError::MalformedUnitCommand),
     }
 }
 

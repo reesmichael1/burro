@@ -23,11 +23,11 @@ pub struct Page {
 }
 
 impl Page {
-    fn new() -> Self {
+    fn new(width: &f64, height: &f64) -> Self {
         Self {
             boxes: vec![],
-            height: 11. * 72.,
-            width: 8.5 * 72.,
+            height: *height,
+            width: *width,
         }
     }
 }
@@ -147,6 +147,10 @@ pub struct LayoutBuilder<'a> {
     alignments: Vec<Alignment>,
     margins: Vec<f64>,
     pt_sizes: Vec<f64>,
+    pending_width: Option<f64>,
+    pending_height: Option<f64>,
+    page_heights: Vec<f64>,
+    page_widths: Vec<f64>,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -194,8 +198,8 @@ impl<'a> LayoutBuilder<'a> {
                 x: params.margin_left,
                 y: params.page_height - (params.margin_top + params.pt_size + params.leading),
             },
+            pages: vec![Page::new(&params.page_width, &params.page_height)],
             params,
-            pages: vec![Page::new()],
             font: Font::ROMAN,
             font_data,
             font_map,
@@ -204,6 +208,10 @@ impl<'a> LayoutBuilder<'a> {
             alignments: vec![],
             margins: vec![],
             pt_sizes: vec![],
+            page_heights: vec![],
+            page_widths: vec![],
+            pending_height: None,
+            pending_width: None,
         })
     }
 
@@ -276,6 +284,30 @@ impl<'a> LayoutBuilder<'a> {
                                 self.params.margin_top = margins;
                                 self.params.margin_left = margins;
                                 self.params.margin_right = margins;
+                            } else {
+                                return Err(BurroError::EmptyReset);
+                            }
+                        }
+                    },
+                    Command::PageWidth(arg) => match arg {
+                        ResetArg::Explicit(dim) => {
+                            self.pending_width = Some(*dim);
+                        }
+                        ResetArg::Reset => {
+                            if let Some(width) = self.page_widths.pop() {
+                                self.pending_width = Some(width);
+                            } else {
+                                return Err(BurroError::EmptyReset);
+                            }
+                        }
+                    },
+                    Command::PageHeight(arg) => match arg {
+                        ResetArg::Explicit(dim) => {
+                            self.pending_height = Some(*dim);
+                        }
+                        ResetArg::Reset => {
+                            if let Some(height) = self.page_heights.pop() {
+                                self.pending_height = Some(height);
                             } else {
                                 return Err(BurroError::EmptyReset);
                             }
@@ -558,7 +590,25 @@ impl<'a> LayoutBuilder<'a> {
     fn advance_y_cursor(&mut self, delta_y: f64, page: &mut Page) {
         self.cursor.y -= delta_y;
         if self.cursor.y < self.params.margin_bottom {
-            let final_page = std::mem::replace(page, Page::new());
+            let width = if let Some(w) = self.pending_width {
+                let current = std::mem::replace(&mut self.params.page_width, w);
+                self.page_widths.push(current);
+                self.pending_width = None;
+                w
+            } else {
+                self.params.page_width
+            };
+
+            let height = if let Some(h) = self.pending_height {
+                let current = std::mem::replace(&mut self.params.page_height, h);
+                self.page_heights.push(current);
+                self.pending_height = None;
+                h
+            } else {
+                self.params.page_height
+            };
+
+            let final_page = std::mem::replace(page, Page::new(&width, &height));
             self.pages.push(final_page);
 
             self.cursor.y = self.params.page_height
