@@ -313,6 +313,13 @@ impl<'a> LayoutBuilder<'a> {
                             }
                         }
                     },
+
+                    Command::PageBreak => {
+                        let (width, height) = self.next_page_dims();
+
+                        self.pages.push(Page::new(&width, &height));
+                        self.set_cursor_top_left();
+                    }
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
             }
@@ -376,7 +383,6 @@ impl<'a> LayoutBuilder<'a> {
                     //
                     // Then, once we know where the lines are,
                     // we can continue by adding a box for each glyph position.
-
                     let font_data = self
                         .font_data
                         .get(&self.font)
@@ -457,7 +463,6 @@ impl<'a> LayoutBuilder<'a> {
                 ResetArg::Explicit(size) => {
                     let current = std::mem::replace(&mut self.params.pt_size, *size);
                     self.pt_sizes.push(current);
-                    // self.params.pt_size = *size as f64;
                 }
                 ResetArg::Reset => {
                     if let Some(size) = self.pt_sizes.pop() {
@@ -587,27 +592,33 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
+    fn next_page_dims(&mut self) -> (f64, f64) {
+        let width = if let Some(w) = self.pending_width {
+            let current = std::mem::replace(&mut self.params.page_width, w);
+            self.page_widths.push(current);
+            self.pending_width = None;
+            w
+        } else {
+            self.params.page_width
+        };
+
+        let height = if let Some(h) = self.pending_height {
+            let current = std::mem::replace(&mut self.params.page_height, h);
+            self.page_heights.push(current);
+            self.pending_height = None;
+            h
+        } else {
+            self.params.page_height
+        };
+
+        (width, height)
+    }
+
     fn advance_y_cursor(&mut self, delta_y: f64, page: &mut Page) {
         self.cursor.y -= delta_y;
+
         if self.cursor.y < self.params.margin_bottom {
-            let width = if let Some(w) = self.pending_width {
-                let current = std::mem::replace(&mut self.params.page_width, w);
-                self.page_widths.push(current);
-                self.pending_width = None;
-                w
-            } else {
-                self.params.page_width
-            };
-
-            let height = if let Some(h) = self.pending_height {
-                let current = std::mem::replace(&mut self.params.page_height, h);
-                self.page_heights.push(current);
-                self.pending_height = None;
-                h
-            } else {
-                self.params.page_height
-            };
-
+            let (width, height) = self.next_page_dims();
             let final_page = std::mem::replace(page, Page::new(&width, &height));
             self.pages.push(final_page);
 

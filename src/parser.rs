@@ -18,6 +18,12 @@ pub enum Command {
     Margins(ResetArg<f64>),
     PageWidth(ResetArg<f64>),
     PageHeight(ResetArg<f64>),
+    // There's an argument for PageBreak to be a StyleChange instead of a Command,
+    // which would allow us to insert breaks inside of paragraphs.
+    // However, a workaround is to just end the paragaph where you want the break,
+    // insert the break, and then continue in the next paragraph with no indent
+    // (once we allow customizing the paragraph indent).
+    PageBreak,
 }
 
 #[derive(Debug, PartialEq)]
@@ -64,7 +70,13 @@ pub struct DocConfig {
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 4] = ["margins", "align", "page_width", "page_height"];
+const COMMAND_NAMES: [&str; 5] = [
+    "margins",
+    "align",
+    "page_width",
+    "page_height",
+    "page_break",
+];
 
 impl DocConfig {
     fn build() -> Self {
@@ -188,6 +200,7 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             let (arg, rem) = parse_unit_command(tokens)?;
             Ok((Node::Command(Command::PageHeight(arg)), rem))
         }
+        "page_break" => Ok((Node::Command(Command::PageBreak), &tokens[1..])),
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
