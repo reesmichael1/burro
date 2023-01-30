@@ -1,5 +1,7 @@
 .margins[2in]
 .pt_size[12]
+.page_width[8.5in]
+.page_height[11in]
 .start
 .align[center]
 

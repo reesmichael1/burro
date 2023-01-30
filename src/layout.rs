@@ -23,11 +23,11 @@ pub struct Page {
 }
 
 impl Page {
-    fn new(width: &f64, height: &f64) -> Self {
+    fn new(width: f64, height: f64) -> Self {
         Self {
             boxes: vec![],
-            height: *height,
-            width: *width,
+            height,
+            width,
         }
     }
 }
@@ -198,7 +198,7 @@ impl<'a> LayoutBuilder<'a> {
                 x: params.margin_left,
                 y: params.page_height - (params.margin_top + params.pt_size + params.leading),
             },
-            pages: vec![Page::new(&params.page_width, &params.page_height)],
+            pages: vec![Page::new(params.page_width, params.page_height)],
             params,
             font: Font::ROMAN,
             font_data,
@@ -248,6 +248,21 @@ impl<'a> LayoutBuilder<'a> {
 
         if let Some(size) = config.pt_size {
             self.params.pt_size = size;
+        }
+
+        if let Some(width) = config.page_width {
+            self.params.page_width = width;
+        }
+
+        if let Some(height) = config.page_height {
+            self.params.page_height = height;
+        }
+
+        if config.page_height.is_some() || config.page_width.is_some() {
+            self.pages.pop();
+            self.pages
+                .push(Page::new(self.params.page_width, self.params.page_height));
+            self.set_cursor_top_left();
         }
     }
 
@@ -317,7 +332,7 @@ impl<'a> LayoutBuilder<'a> {
                     Command::PageBreak => {
                         let (width, height) = self.next_page_dims();
 
-                        self.pages.push(Page::new(&width, &height));
+                        self.pages.push(Page::new(width, height));
                         self.set_cursor_top_left();
                     }
                 },
@@ -619,7 +634,7 @@ impl<'a> LayoutBuilder<'a> {
 
         if self.cursor.y < self.params.margin_bottom {
             let (width, height) = self.next_page_dims();
-            let final_page = std::mem::replace(page, Page::new(&width, &height));
+            let final_page = std::mem::replace(page, Page::new(width, height));
             self.pages.push(final_page);
 
             self.cursor.y = self.params.page_height

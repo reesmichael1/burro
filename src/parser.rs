@@ -67,6 +67,8 @@ pub struct Document {
 pub struct DocConfig {
     pub margins: Option<f64>,
     pub pt_size: Option<f64>,
+    pub page_width: Option<f64>,
+    pub page_height: Option<f64>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
@@ -90,6 +92,16 @@ impl DocConfig {
 
     fn with_pt_size(mut self, pt_size: f64) -> Self {
         self.pt_size = Some(pt_size);
+        self
+    }
+
+    fn with_page_height(mut self, height: f64) -> Self {
+        self.page_height = Some(height);
+        self
+    }
+
+    fn with_page_width(mut self, width: f64) -> Self {
+        self.page_width = Some(width);
         self
     }
 }
@@ -358,9 +370,15 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
 
                     match command {
                         Node::Command(Command::Margins(ResetArg::Explicit(dim))) => {
-                            config = config.with_margins(dim)
+                            config = config.with_margins(dim);
                         }
-                        _ => return Err(ParseError::Unimplemented),
+                        Node::Command(Command::PageHeight(ResetArg::Explicit(height))) => {
+                            config = config.with_page_height(height);
+                        }
+                        Node::Command(Command::PageWidth(ResetArg::Explicit(width))) => {
+                            config = config.with_page_width(width);
+                        }
+                        _ => return Err(ParseError::InvalidConfiguration),
                     }
 
                     tokens = rem;
@@ -645,11 +663,17 @@ hello";
     fn document_configuration() -> Result<(), ParseError> {
         let input = ".margins[2in]
 .pt_size[18]
+.page_height[11in]
+.page_width[8.5in]
 .start
 Hello world!";
 
         let expected = Document {
-            config: DocConfig::build().with_margins(144.0).with_pt_size(18.),
+            config: DocConfig::build()
+                .with_margins(144.0)
+                .with_pt_size(18.)
+                .with_page_width(612.)
+                .with_page_height(792.),
             nodes: vec![Node::Paragraph(vec![words_to_text(&["Hello", "world!"])])],
         };
 
