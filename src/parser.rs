@@ -34,7 +34,7 @@ pub enum StyleBlock {
 
 #[derive(Debug, PartialEq)]
 pub enum StyleChange {
-    PtSize(u16),
+    PtSize(ResetArg<f64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -58,6 +58,7 @@ pub struct Document {
 #[derive(Default, Debug, PartialEq)]
 pub struct DocConfig {
     pub margins: Option<f64>,
+    pub pt_size: Option<f64>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
@@ -70,6 +71,11 @@ impl DocConfig {
 
     fn with_margins(mut self, margins: f64) -> Self {
         self.margins = Some(margins);
+        self
+    }
+
+    fn with_pt_size(mut self, pt_size: f64) -> Self {
+        self.pt_size = Some(pt_size);
         self
     }
 }
@@ -244,14 +250,18 @@ fn parse_point_size(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseErr
     match tokens {
         [Token::OpenSquare, Token::Word(size), Token::CloseSquare, rest @ ..] => {
             let size = size
-                .parse::<u16>()
+                .parse::<f64>()
                 .map_err(|_| ParseError::MalformedPtSize)?;
 
             Ok((
-                StyleBlock::Command(StyleChange::PtSize(size)),
+                StyleBlock::Command(StyleChange::PtSize(ResetArg::Explicit(size))),
                 pop_spaces(rest),
             ))
         }
+        [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => Ok((
+            StyleBlock::Command(StyleChange::PtSize(ResetArg::Reset)),
+            pop_spaces(rest),
+        )),
         _ => Err(ParseError::MalformedPtSize),
     }
 }
@@ -305,6 +315,20 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
         match &tokens[0] {
             Token::Command(name) => match name.as_ref() {
                 "start" => return Ok((config, tokens)),
+                "pt_size" => {
+                    let (com, rem) = parse_point_size(&tokens[1..])?;
+                    match com {
+                        StyleBlock::Command(StyleChange::PtSize(arg)) => match arg {
+                            ResetArg::Explicit(size) => {
+                                config = config.with_pt_size(size as f64);
+                            }
+                            ResetArg::Reset => return Err(ParseError::InvalidConfiguration),
+                        },
+                        _ => unreachable!(),
+                    }
+
+                    tokens = rem;
+                }
                 _ => {
                     let (command, rem) = parse_command(name.to_string(), tokens)?;
 
@@ -436,12 +460,16 @@ mod tests {
         StyleBlock::Text(converted)
     }
 
+    fn explicit<T>(val: T) -> ResetArg<T> {
+        ResetArg::Explicit(val)
+    }
+
     #[test]
     fn basic_parsing() -> Result<(), ParseError> {
         let expected = Document {
             config: DocConfig::build(),
             nodes: vec![
-                Node::Command(Command::Align(ResetArg::Explicit(Alignment::Center))),
+                Node::Command(Command::Align(explicit(Alignment::Center))),
                 Node::Paragraph(vec![words_to_text(&["This", "is", "a", "text", "node."])]),
             ],
         };
@@ -531,7 +559,7 @@ a .pt_size[14] b";
             config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![
                 words_to_text_sp(&["a"]),
-                StyleBlock::Command(StyleChange::PtSize(14)),
+                StyleBlock::Command(StyleChange::PtSize(explicit(14.))),
                 words_to_text(&["b"]),
             ])],
         };
@@ -555,7 +583,7 @@ b";
             nodes: vec![
                 Node::Paragraph(vec![words_to_text_sp(&["a"])]),
                 Node::Paragraph(vec![
-                    StyleBlock::Command(StyleChange::PtSize(14)),
+                    StyleBlock::Command(StyleChange::PtSize(explicit(14.))),
                     words_to_text(&["b"]),
                 ]),
             ],
@@ -602,11 +630,12 @@ hello";
     #[test]
     fn document_configuration() -> Result<(), ParseError> {
         let input = ".margins[2in]
+.pt_size[18]
 .start
 Hello world!";
 
         let expected = Document {
-            config: DocConfig::build().with_margins(144.0),
+            config: DocConfig::build().with_margins(144.0).with_pt_size(18.),
             nodes: vec![Node::Paragraph(vec![words_to_text(&["Hello", "world!"])])],
         };
 
@@ -626,7 +655,7 @@ b";
             config: DocConfig::default(),
             nodes: vec![
                 Node::Paragraph(vec![words_to_text(&["a"])]),
-                Node::Command(Command::Margins(ResetArg::Explicit(144.))),
+                Node::Command(Command::Margins(explicit(144.))),
                 Node::Paragraph(vec![words_to_text(&["b"])]),
             ],
         };

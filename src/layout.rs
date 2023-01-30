@@ -146,6 +146,7 @@ pub struct LayoutBuilder<'a> {
     par_counter: usize,
     alignments: Vec<Alignment>,
     margins: Vec<f64>,
+    pt_sizes: Vec<f64>,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -202,6 +203,7 @@ impl<'a> LayoutBuilder<'a> {
             par_counter: 0,
             alignments: vec![],
             margins: vec![],
+            pt_sizes: vec![],
         })
     }
 
@@ -234,6 +236,10 @@ impl<'a> LayoutBuilder<'a> {
             self.params.margin_right = margin;
 
             self.set_cursor_top_left();
+        }
+
+        if let Some(size) = config.pt_size {
+            self.params.pt_size = size;
         }
     }
 
@@ -402,21 +408,36 @@ impl<'a> LayoutBuilder<'a> {
                     self.font = self.font - Font::ITALIC;
                 }
 
-                StyleBlock::Command(change) => self.handle_style_change(change),
+                StyleBlock::Command(change) => self.handle_style_change(change)?,
             }
         }
 
         Ok(())
     }
 
-    fn handle_style_change(&mut self, change: &StyleChange) {
+    fn handle_style_change(&mut self, change: &StyleChange) -> Result<(), BurroError> {
         match change {
             // To decide: do we want to automatically change the leading,
             // or ask the user to change it themselves?
             // Perhaps if the leading has been explicitly set, then leave it alone,
             // and otherwise change it automatically?
-            StyleChange::PtSize(size) => self.params.pt_size = *size as f64,
+            StyleChange::PtSize(arg) => match arg {
+                ResetArg::Explicit(size) => {
+                    let current = std::mem::replace(&mut self.params.pt_size, *size);
+                    self.pt_sizes.push(current);
+                    // self.params.pt_size = *size as f64;
+                }
+                ResetArg::Reset => {
+                    if let Some(size) = self.pt_sizes.pop() {
+                        self.params.pt_size = size;
+                    } else {
+                        return Err(BurroError::EmptyReset);
+                    }
+                }
+            },
         }
+
+        Ok(())
     }
 
     fn emit_word(&mut self, word: &Word, page: &mut Page) {
