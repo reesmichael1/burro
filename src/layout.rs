@@ -125,7 +125,7 @@ struct BurroParams {
     page_width: f64,
     space_width: f64,
     page_height: f64,
-    line_height: f64,
+    par_space: f64,
     font_family: String,
     par_indent: f64,
 }
@@ -151,6 +151,10 @@ pub struct LayoutBuilder<'a> {
     pending_height: Option<f64>,
     page_heights: Vec<f64>,
     page_widths: Vec<f64>,
+    leadings: Vec<f64>,
+    space_widths: Vec<f64>,
+    par_indents: Vec<f64>,
+    par_spaces: Vec<f64>,
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -163,7 +167,7 @@ impl<'a> LayoutBuilder<'a> {
             margin_right: inch,
             margin_bottom: inch,
             pt_size,
-            line_height: 1.25 * pt_size,
+            par_space: 1.25 * pt_size,
             leading: 2.0,
             alignment: Alignment::Justify,
             page_width: inch * 8.5,
@@ -212,6 +216,10 @@ impl<'a> LayoutBuilder<'a> {
             page_widths: vec![],
             pending_height: None,
             pending_width: None,
+            leadings: vec![],
+            space_widths: vec![],
+            par_indents: vec![],
+            par_spaces: vec![],
         })
     }
 
@@ -256,6 +264,22 @@ impl<'a> LayoutBuilder<'a> {
 
         if let Some(height) = config.page_height {
             self.params.page_height = height;
+        }
+
+        if let Some(lead) = config.leading {
+            self.params.leading = lead;
+        }
+
+        if let Some(space) = config.par_space {
+            self.params.par_space = space;
+        }
+
+        if let Some(indent) = config.par_indent {
+            self.params.par_indent = indent;
+        }
+
+        if let Some(width) = config.space_width {
+            self.params.space_width = width;
         }
 
         if config.page_height.is_some() || config.page_width.is_some() {
@@ -335,6 +359,18 @@ impl<'a> LayoutBuilder<'a> {
                         self.pages.push(Page::new(width, height));
                         self.set_cursor_top_left();
                     }
+                    Command::Leading(arg) => {
+                        handle_reset_val(arg, &mut self.params.leading, &mut self.leadings)?;
+                    }
+                    Command::SpaceWidth(arg) => {
+                        handle_reset_val(arg, &mut self.params.space_width, &mut self.space_widths)?
+                    }
+                    Command::ParIndent(arg) => {
+                        handle_reset_val(arg, &mut self.params.par_indent, &mut self.par_indents)?;
+                    }
+                    Command::ParSpace(arg) => {
+                        handle_reset_val(arg, &mut self.params.par_space, &mut self.par_spaces)?;
+                    }
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
             }
@@ -368,7 +404,7 @@ impl<'a> LayoutBuilder<'a> {
 
         let mut page = self.pages.pop().expect("should have at least one page");
         self.advance_y_cursor(
-            self.params.leading + self.params.pt_size + self.params.line_height,
+            self.params.leading + self.params.pt_size + self.params.par_space,
             &mut page,
         );
 
@@ -671,4 +707,25 @@ impl<'a> LayoutBuilder<'a> {
 
 fn font_units_to_points(units: i32, upem: i32, pt_size: f64) -> f64 {
     (units as f64) * pt_size / (upem as f64)
+}
+
+fn handle_reset_val(
+    input: &ResetArg<f64>,
+    value: &mut f64,
+    queue: &mut Vec<f64>,
+) -> Result<(), BurroError> {
+    match input {
+        ResetArg::Explicit(i) => {
+            let current = std::mem::replace(value, *i);
+            queue.push(current);
+        }
+        ResetArg::Reset => {
+            if let Some(i) = queue.pop() {
+                *value = i;
+            } else {
+                return Err(BurroError::EmptyReset);
+            }
+        }
+    }
+    Ok(())
 }

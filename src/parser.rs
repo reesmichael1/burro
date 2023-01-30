@@ -24,6 +24,10 @@ pub enum Command {
     // insert the break, and then continue in the next paragraph with no indent
     // (once we allow customizing the paragraph indent).
     PageBreak,
+    Leading(ResetArg<f64>),
+    ParSpace(ResetArg<f64>),
+    SpaceWidth(ResetArg<f64>),
+    ParIndent(ResetArg<f64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -69,15 +73,23 @@ pub struct DocConfig {
     pub pt_size: Option<f64>,
     pub page_width: Option<f64>,
     pub page_height: Option<f64>,
+    pub leading: Option<f64>,
+    pub par_space: Option<f64>,
+    pub par_indent: Option<f64>,
+    pub space_width: Option<f64>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 5] = [
-    "margins",
+const COMMAND_NAMES: [&str; 9] = [
     "align",
+    "leading",
+    "margins",
     "page_width",
     "page_height",
     "page_break",
+    "par_indent",
+    "par_space",
+    "space_width",
 ];
 
 impl DocConfig {
@@ -102,6 +114,26 @@ impl DocConfig {
 
     fn with_page_width(mut self, width: f64) -> Self {
         self.page_width = Some(width);
+        self
+    }
+
+    fn with_leading(mut self, lead: f64) -> Self {
+        self.leading = Some(lead);
+        self
+    }
+
+    fn with_par_space(mut self, space: f64) -> Self {
+        self.par_space = Some(space);
+        self
+    }
+
+    fn with_par_indent(mut self, indent: f64) -> Self {
+        self.par_indent = Some(indent);
+        self
+    }
+
+    fn with_space_width(mut self, width: f64) -> Self {
+        self.space_width = Some(width);
         self
     }
 }
@@ -213,6 +245,22 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             Ok((Node::Command(Command::PageHeight(arg)), rem))
         }
         "page_break" => Ok((Node::Command(Command::PageBreak), &tokens[1..])),
+        "leading" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::Leading(arg)), rem))
+        }
+        "par_indent" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::ParIndent(arg)), rem))
+        }
+        "par_space" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::ParSpace(arg)), rem))
+        }
+        "space_width" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::SpaceWidth(arg)), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -377,6 +425,18 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         }
                         Node::Command(Command::PageWidth(ResetArg::Explicit(width))) => {
                             config = config.with_page_width(width);
+                        }
+                        Node::Command(Command::Leading(ResetArg::Explicit(lead))) => {
+                            config = config.with_leading(lead);
+                        }
+                        Node::Command(Command::SpaceWidth(ResetArg::Explicit(width))) => {
+                            config = config.with_space_width(width);
+                        }
+                        Node::Command(Command::ParIndent(ResetArg::Explicit(indent))) => {
+                            config = config.with_par_indent(indent);
+                        }
+                        Node::Command(Command::ParSpace(ResetArg::Explicit(space))) => {
+                            config = config.with_par_space(space);
                         }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }
