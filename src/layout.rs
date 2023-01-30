@@ -487,14 +487,22 @@ impl<'a> LayoutBuilder<'a> {
                     self.pages.push(page);
                 }
                 StyleBlock::Bold(blocks) => {
-                    self.font = self.font | Font::BOLD;
-                    self.handle_style_blocks(blocks)?;
-                    self.font = self.font - Font::BOLD;
+                    if self.font.intersects(Font::BOLD) {
+                        self.handle_style_blocks(blocks)?
+                    } else {
+                        self.font = self.font | Font::BOLD;
+                        self.handle_style_blocks(blocks)?;
+                        self.font = self.font - Font::BOLD;
+                    }
                 }
                 StyleBlock::Italic(blocks) => {
-                    self.font = self.font | Font::ITALIC;
-                    self.handle_style_blocks(blocks)?;
-                    self.font = self.font - Font::ITALIC;
+                    if self.font.intersects(Font::ITALIC) {
+                        self.handle_style_blocks(blocks)?
+                    } else {
+                        self.font = self.font | Font::ITALIC;
+                        self.handle_style_blocks(blocks)?;
+                        self.font = self.font - Font::ITALIC;
+                    }
                 }
 
                 StyleBlock::Command(change) => self.handle_style_change(change)?,
