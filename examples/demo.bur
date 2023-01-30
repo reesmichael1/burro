@@ -1,11 +1,26 @@
+.margins[2in]
+.pt_size[12]
 .start
 .align[center]
 
+.pt_size[18]
 .bold[Burro]
 
 .align[justify]
-This is a demonstration of .italic[Burro], a new typesetting language.
+; Lines beginning with a ; are commented out (have no effect on the output)
+; The "-" argument resets the value of this command 
+; to its previous value (here, 11 pts)
+.pt_size[-]
+This is a demonstration of .italic[Burro], a new typesetting language 
+designed for text\-heavy documents.
 
-Burro's prime directive is that it, as a typesetting language, should be easy to type while still producing beautiful documents. Everything else is secondary to those goals, including ease of reading.
+Burro is designed to be easy to type while retaining complete control 
+over the output. It aims to be a middle ground between the limited power 
+of Markdown and the heaviness of TeX and friends. Burro is directly inspired by,
+and hopes to be a spiritual successor to, groff with the mom macro set. 
 
-It is also important that the author should have complete control over the placement of .italic[everything] that happens on the page. Burro strives to have high\-quality defaults that can be easily tweaked when necessary.
+Burro does not try to guess where things should go on the page; 
+rather, as a typographer, .italic[you] choose your layout settings 
+and Burro applies those to the text. 
+Burro aims to feel more like setting type in a printing press 
+than just typing into a document.
