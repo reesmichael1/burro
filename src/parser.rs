@@ -50,6 +50,9 @@ pub enum StyleBlock {
 #[derive(Debug, PartialEq)]
 pub enum StyleChange {
     PtSize(ResetArg<f64>),
+    Break,
+    VSpace(f64),
+    HSpace(ResetArg<f64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -193,6 +196,8 @@ pub enum ParseError {
     InvalidUnit(String),
     #[error("invalid command with string argument")]
     MalformedStrCommand,
+    #[error("encountered reset command in invalid context")]
+    InvalidReset,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -410,6 +415,27 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
             "bold" => parse_bold_command(rest)?,
             "italic" => parse_italic_command(rest)?,
             "pt_size" => parse_point_size(rest)?,
+            "break" => (
+                StyleBlock::Command(StyleChange::Break),
+                pop_spaces(&tokens[1..]),
+            ),
+            "vspace" => {
+                let (arg, rem) = parse_unit_command(&tokens)?;
+                match arg {
+                    ResetArg::Explicit(dim) => (
+                        StyleBlock::Command(StyleChange::VSpace(dim)),
+                        pop_spaces(rem),
+                    ),
+                    ResetArg::Reset => return Err(ParseError::InvalidReset),
+                }
+            }
+            "hspace" => {
+                let (arg, rem) = parse_unit_command(&tokens)?;
+                (
+                    StyleBlock::Command(StyleChange::HSpace(arg)),
+                    pop_spaces(rem),
+                )
+            }
             _ => Err(ParseError::UnknownCommand(cmd.to_string()))?,
         },
         [Token::Newline, rest @ ..] => {
@@ -896,6 +922,24 @@ lines";
             nodes: vec![Node::Paragraph(vec![words_to_text(&[
                 "Hello", "world", "lots", "of", "lines",
             ])])],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn space_after_break() -> Result<(), ParseError> {
+        let input = ".start
+Hello .break world";
+
+        let expected = Document {
+            config: DocConfig::default(),
+            nodes: vec![Node::Paragraph(vec![
+                words_to_text_sp(&["Hello"]),
+                StyleBlock::Command(StyleChange::Break),
+                words_to_text(&["world"]),
+            ])],
         };
 
         assert_eq!(expected, parse_tokens(&lex(input))?);

@@ -1,0 +1,13 @@
+.start
+.align[justify]
+We'll demonstrate the new spacing macros in this document. These let us move the cursor around the page of our own free will. .break We're now continuing on a new line without going to a new paragraph.
+.break
+We could also put this on a new line, like above.
+.vspace[4P]
+This line's baseline should be four picas below the previous line's. However, note that it is not reset back to the left margin! To handle that, we'll need to introduce the hspace command.
+
+In this paragraph, .hspace[4P] we've added four picas of horizontal space here in the middle. hspace also takes the reset command, which resets us to the left margin. This .italic[could] be used to type text over itself, or...
+.vspace[2P]
+.hspace[-]
+; Bug here: the ellipsis at the beginning of the line is treated as a command
+\..\.it can be used to reset the cursor after adding vertical space!

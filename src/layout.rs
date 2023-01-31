@@ -130,6 +130,7 @@ struct BurroParams {
     par_indent: f64,
 }
 
+#[derive(Debug)]
 struct Point2D {
     x: f64,
     y: f64,
@@ -424,7 +425,9 @@ impl<'a> LayoutBuilder<'a> {
             self.cursor.x = self.params.margin_left + self.params.par_indent;
         }
 
-        self.handle_style_blocks(paragraph)?;
+        let mut page = self.pages.pop().expect("should have at least one page");
+        self.handle_style_blocks(paragraph, &mut page)?;
+        self.pages.push(page);
         self.finish_paragraph();
         self.cursor.x = self.params.margin_left;
 
@@ -445,12 +448,15 @@ impl<'a> LayoutBuilder<'a> {
             .pages
             .pop()
             .expect("should have at least one page stored, please file a bug");
-        let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
-        self.emit_line(remaining_line, &mut page, true);
+        self.emit_remaining_line(&mut page);
         self.pages.push(page);
     }
 
-    fn handle_style_blocks(&mut self, blocks: &'a [StyleBlock]) -> Result<(), BurroError> {
+    fn handle_style_blocks(
+        &mut self,
+        blocks: &'a [StyleBlock],
+        page: &mut Page,
+    ) -> Result<(), BurroError> {
         for block in blocks {
             match block {
                 StyleBlock::Text(words) => {
@@ -475,11 +481,6 @@ impl<'a> LayoutBuilder<'a> {
                     let font_id = self
                         .font_map
                         .font_id(&self.params.font_family, self.font.font_num());
-
-                    let mut page = self
-                        .pages
-                        .pop()
-                        .expect("should have any pages stored, please file a bug");
                     let mut current_line = std::mem::replace(&mut self.current_line, vec![]);
 
                     for word in words {
@@ -497,48 +498,48 @@ impl<'a> LayoutBuilder<'a> {
                                 };
                             }
 
-                            self.emit_line(current_line, &mut page, false);
+                            self.emit_line(current_line, page, false);
 
                             self.cursor.x = self.params.margin_left;
-                            self.advance_y_cursor(
-                                self.params.leading + self.params.pt_size,
-                                &mut page,
-                            );
+                            self.advance_y_cursor(self.params.leading + self.params.pt_size, page);
 
                             current_line = vec![last_word];
                         }
                     }
 
                     self.current_line = current_line;
-                    self.pages.push(page);
                 }
                 StyleBlock::Bold(blocks) => {
                     if self.font.intersects(Font::BOLD) {
-                        self.handle_style_blocks(blocks)?
+                        self.handle_style_blocks(blocks, page)?
                     } else {
                         self.font = self.font | Font::BOLD;
-                        self.handle_style_blocks(blocks)?;
+                        self.handle_style_blocks(blocks, page)?;
                         self.font = self.font - Font::BOLD;
                     }
                 }
                 StyleBlock::Italic(blocks) => {
                     if self.font.intersects(Font::ITALIC) {
-                        self.handle_style_blocks(blocks)?
+                        self.handle_style_blocks(blocks, page)?
                     } else {
                         self.font = self.font | Font::ITALIC;
-                        self.handle_style_blocks(blocks)?;
+                        self.handle_style_blocks(blocks, page)?;
                         self.font = self.font - Font::ITALIC;
                     }
                 }
 
-                StyleBlock::Command(change) => self.handle_style_change(change)?,
+                StyleBlock::Command(change) => self.handle_style_change(change, page)?,
             }
         }
 
         Ok(())
     }
 
-    fn handle_style_change(&mut self, change: &StyleChange) -> Result<(), BurroError> {
+    fn handle_style_change(
+        &mut self,
+        change: &StyleChange,
+        page: &mut Page,
+    ) -> Result<(), BurroError> {
         match change {
             // To decide: do we want to automatically change the leading,
             // or ask the user to change it themselves?
@@ -557,9 +558,37 @@ impl<'a> LayoutBuilder<'a> {
                     }
                 }
             },
+            StyleChange::Break => {
+                self.emit_remaining_line(page);
+                self.cursor.x = self.params.margin_left;
+                self.advance_y_cursor(self.params.leading + self.params.pt_size, page);
+            }
+            StyleChange::VSpace(space) => {
+                self.emit_remaining_line(page);
+                self.advance_y_cursor(*space, page);
+            }
+            StyleChange::HSpace(arg) => match arg {
+                ResetArg::Explicit(space) => {
+                    self.emit_remaining_line(page);
+                    self.cursor.x += space;
+                    if self.cursor.x >= self.params.page_width - self.params.margin_right {
+                        self.cursor.x = self.params.margin_left;
+                        self.advance_y_cursor(self.params.leading + self.params.pt_size, page);
+                    }
+                }
+                ResetArg::Reset => {
+                    self.emit_remaining_line(page);
+                    self.cursor.x = self.params.margin_left;
+                }
+            },
         }
 
         Ok(())
+    }
+
+    fn emit_remaining_line(&mut self, page: &mut Page) {
+        let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
+        self.emit_line(remaining_line, page, true);
     }
 
     fn emit_word(&mut self, word: &Word, page: &mut Page) {
