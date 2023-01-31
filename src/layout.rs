@@ -140,7 +140,7 @@ pub struct LayoutBuilder<'a> {
     cursor: Point2D,
     pages: Vec<Page>,
     font: Font,
-    font_data: HashMap<Font, Vec<u8>>,
+    font_data: HashMap<(String, Font), Vec<u8>>,
     font_map: &'a FontMap,
     current_line: Vec<Word<'a>>,
     par_counter: usize,
@@ -155,6 +155,33 @@ pub struct LayoutBuilder<'a> {
     space_widths: Vec<f64>,
     par_indents: Vec<f64>,
     par_spaces: Vec<f64>,
+    families: Vec<String>,
+    fonts: Vec<Font>,
+}
+
+fn load_font_data<'a>(
+    font_map: &'a FontMap,
+) -> Result<HashMap<(String, Font), Vec<u8>>, BurroError> {
+    let mut font_data = HashMap::new();
+    for (name, family) in &font_map.families {
+        if let Some(p) = &family.roman {
+            font_data.insert((name.clone(), Font::ROMAN), std::fs::read(p)?);
+        }
+
+        if let Some(p) = &family.italic {
+            font_data.insert((name.clone(), Font::ITALIC), std::fs::read(p)?);
+        }
+
+        if let Some(p) = &family.bold {
+            font_data.insert((name.clone(), Font::BOLD), std::fs::read(p)?);
+        }
+
+        if let Some(p) = &family.bold_italic {
+            font_data.insert((name.clone(), Font::BOLD_ITALIC), std::fs::read(p)?);
+        }
+    }
+
+    Ok(font_data)
 }
 
 impl<'a> LayoutBuilder<'a> {
@@ -177,24 +204,7 @@ impl<'a> LayoutBuilder<'a> {
             par_indent: 2. * pt_size,
         };
 
-        let default = &font_map.families["default"];
-
-        let mut font_data = HashMap::new();
-        if let Some(p) = &default.roman {
-            font_data.insert(Font::ROMAN, std::fs::read(p)?);
-        }
-
-        if let Some(p) = &default.italic {
-            font_data.insert(Font::ITALIC, std::fs::read(p)?);
-        }
-
-        if let Some(p) = &default.bold {
-            font_data.insert(Font::BOLD, std::fs::read(p)?);
-        }
-
-        if let Some(p) = &default.bold_italic {
-            font_data.insert(Font::BOLD_ITALIC, std::fs::read(p)?);
-        }
+        let font_data = load_font_data(font_map)?;
 
         Ok(Self {
             // Initialize the cursor at the document's top left corner.
@@ -220,6 +230,8 @@ impl<'a> LayoutBuilder<'a> {
             space_widths: vec![],
             par_indents: vec![],
             par_spaces: vec![],
+            families: vec![],
+            fonts: vec![],
         })
     }
 
@@ -280,6 +292,14 @@ impl<'a> LayoutBuilder<'a> {
 
         if let Some(width) = config.space_width {
             self.params.space_width = width;
+        }
+
+        if let Some(family) = &config.family {
+            self.params.font_family = family.clone();
+        }
+
+        if let Some(font) = config.font {
+            self.font = font;
         }
 
         if config.page_height.is_some() || config.page_width.is_some() {
@@ -371,6 +391,12 @@ impl<'a> LayoutBuilder<'a> {
                     Command::ParSpace(arg) => {
                         handle_reset_val(arg, &mut self.params.par_space, &mut self.par_spaces)?;
                     }
+                    Command::Family(arg) => {
+                        handle_reset_val(arg, &mut self.params.font_family, &mut self.families)?;
+                    }
+                    Command::Font(arg) => {
+                        handle_reset_val(arg, &mut self.font, &mut self.fonts)?;
+                    }
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
             }
@@ -436,7 +462,7 @@ impl<'a> LayoutBuilder<'a> {
                     // we can continue by adding a box for each glyph position.
                     let font_data = self
                         .font_data
-                        .get(&self.font)
+                        .get(&(self.params.font_family.clone(), self.font))
                         .ok_or(BurroError::UnmappedFont)?
                         .clone();
 
@@ -717,14 +743,14 @@ fn font_units_to_points(units: i32, upem: i32, pt_size: f64) -> f64 {
     (units as f64) * pt_size / (upem as f64)
 }
 
-fn handle_reset_val(
-    input: &ResetArg<f64>,
-    value: &mut f64,
-    queue: &mut Vec<f64>,
+fn handle_reset_val<T: Clone>(
+    input: &ResetArg<T>,
+    value: &mut T,
+    queue: &mut Vec<T>,
 ) -> Result<(), BurroError> {
     match input {
         ResetArg::Explicit(i) => {
-            let current = std::mem::replace(value, *i);
+            let current = std::mem::replace(value, i.clone());
             queue.push(current);
         }
         ResetArg::Reset => {

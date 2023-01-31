@@ -4,3 +4,7 @@ roman="/usr/share/fonts/EBGaramond12-otf/EBGaramond-Regular.otf"
 bold="/usr/share/fonts/EBGaramond12-otf/EBGaramond-Bold.otf"
 italic="/usr/share/fonts/EBGaramond12-otf/EBGaramond-Italic.otf"
 bold_italic="/usr/share/fonts/EBGaramond12-otf/EBGaramond-BoldItalic.otf"
+
+[families.DejaVuSans]
+roman="/usr/share/fonts/TTF/DejaVuSans.ttf"
+bold="/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"

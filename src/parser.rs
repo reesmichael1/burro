@@ -2,6 +2,7 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use thiserror::Error;
 
+use crate::fonts::Font;
 use crate::lexer::Token;
 
 #[derive(Debug, PartialEq)]
@@ -28,6 +29,8 @@ pub enum Command {
     ParSpace(ResetArg<f64>),
     SpaceWidth(ResetArg<f64>),
     ParIndent(ResetArg<f64>),
+    Family(ResetArg<String>),
+    Font(ResetArg<Font>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -77,11 +80,15 @@ pub struct DocConfig {
     pub par_space: Option<f64>,
     pub par_indent: Option<f64>,
     pub space_width: Option<f64>,
+    pub family: Option<String>,
+    pub font: Option<Font>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 9] = [
+const COMMAND_NAMES: [&str; 11] = [
     "align",
+    "family",
+    "font",
     "leading",
     "margins",
     "page_width",
@@ -136,6 +143,16 @@ impl DocConfig {
         self.space_width = Some(width);
         self
     }
+
+    fn with_family(mut self, family: String) -> Self {
+        self.family = Some(family);
+        self
+    }
+
+    fn with_font(mut self, font: Font) -> Self {
+        self.font = Some(font);
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -174,6 +191,8 @@ pub enum ParseError {
     InvalidInt(String),
     #[error("invalid unit {0} encountered as measurement")]
     InvalidUnit(String),
+    #[error("invalid command with string argument")]
+    MalformedStrCommand,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -260,6 +279,20 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         "space_width" => {
             let (arg, rem) = parse_unit_command(tokens)?;
             Ok((Node::Command(Command::SpaceWidth(arg)), rem))
+        }
+        "family" => {
+            let (family, rem) = parse_str_command(tokens)?;
+            Ok((Node::Command(Command::Family(family)), rem))
+        }
+        "font" => {
+            let (font, rem) = parse_str_command(tokens)?;
+            match font {
+                ResetArg::Explicit(font) => Ok((
+                    Node::Command(Command::Font(ResetArg::Explicit(font.into()))),
+                    rem,
+                )),
+                ResetArg::Reset => Ok(((Node::Command(Command::Font(ResetArg::Reset))), rem)),
+            }
         }
         _ => Err(ParseError::UnknownCommand(name)),
     }
@@ -438,6 +471,12 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         Node::Command(Command::ParSpace(ResetArg::Explicit(space))) => {
                             config = config.with_par_space(space);
                         }
+                        Node::Command(Command::Family(ResetArg::Explicit(family))) => {
+                            config = config.with_family(family);
+                        }
+                        Node::Command(Command::Font(ResetArg::Explicit(font))) => {
+                            config = config.with_font(font);
+                        }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }
 
@@ -476,6 +515,18 @@ fn parse_unit(input: &str) -> Result<f64, ParseError> {
         }
     } else {
         Ok(num)
+    }
+}
+
+fn parse_str_command(tokens: &[Token]) -> Result<(ResetArg<String>, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), Token::OpenSquare, Token::Word(s), Token::CloseSquare, rest @ ..] => {
+            Ok((ResetArg::Explicit(s.to_string()), rest))
+        }
+        [Token::Command(_), Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
+            Ok((ResetArg::Reset, rest))
+        }
+        _ => Err(ParseError::MalformedStrCommand),
     }
 }
 
@@ -790,6 +841,43 @@ b";
     #[test]
     fn unit_conversion_millimeters() -> Result<(), ParseError> {
         assert_f64_near!(28.3464576, parse_unit("10mm")?);
+        Ok(())
+    }
+
+    #[test]
+    fn parsing_string_arguments() -> Result<(), ParseError> {
+        let input = "
+.start
+.family[TimesNew]
+.font[Roman]";
+
+        let expected = Document {
+            config: DocConfig::default(),
+            nodes: vec![
+                Node::Command(Command::Family(explicit("TimesNew".into()))),
+                Node::Command(Command::Font(explicit("Roman".into()))),
+            ],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn string_args_in_config() -> Result<(), ParseError> {
+        let input = "
+.family[TimesNew]
+.font[Roman]
+.start";
+
+        let expected = Document {
+            config: DocConfig::default()
+                .with_family("TimesNew".to_string())
+                .with_font("Roman".into()),
+            nodes: vec![],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
         Ok(())
     }
 }

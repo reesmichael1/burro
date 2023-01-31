@@ -14,3 +14,21 @@ impl Font {
         self.bits as u16
     }
 }
+
+impl From<&str> for Font {
+    fn from(s: &str) -> Self {
+        match s {
+            "roman" => Self::ROMAN,
+            "bold" => Self::BOLD,
+            "italic" => Self::ITALIC,
+            "bold_italic" => Self::BOLD_ITALIC,
+            _ => Self::ROMAN,
+        }
+    }
+}
+
+impl From<String> for Font {
+    fn from(s: String) -> Self {
+        (&*s).into()
+    }
+}
