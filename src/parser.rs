@@ -313,6 +313,7 @@ fn parse_text(
             words.push(TextUnit::Str(word.to_string()));
             parse_text(words, rest)
         }
+        [Token::Space, Token::Newline, ..] => parse_text(words, &tokens[1..]),
         [Token::Space, rest @ ..] => {
             words.push(TextUnit::Space);
             parse_text(words, rest)
@@ -724,7 +725,7 @@ b";
         let expected = Document {
             config: DocConfig::build(),
             nodes: vec![
-                Node::Paragraph(vec![words_to_text_sp(&["a"])]),
+                Node::Paragraph(vec![words_to_text(&["a"])]),
                 Node::Paragraph(vec![
                     StyleBlock::Command(StyleChange::PtSize(explicit(14.))),
                     words_to_text(&["b"]),
@@ -875,6 +876,26 @@ b";
                 .with_family("TimesNew".to_string())
                 .with_font("Roman".into()),
             nodes: vec![],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn newlines_within_paragraphs() -> Result<(), ParseError> {
+        let input = ".start
+Hello
+world 
+lots 
+of 
+lines";
+
+        let expected = Document {
+            config: DocConfig::default(),
+            nodes: vec![Node::Paragraph(vec![words_to_text(&[
+                "Hello", "world", "lots", "of", "lines",
+            ])])],
         };
 
         assert_eq!(expected, parse_tokens(&lex(input))?);
