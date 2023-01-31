@@ -143,6 +143,7 @@ pub struct LayoutBuilder<'a> {
     font: Font,
     font_data: HashMap<(String, Font), Vec<u8>>,
     font_map: &'a FontMap,
+    current_page: Page,
     current_line: Vec<Word<'a>>,
     par_counter: usize,
     alignments: Vec<Alignment>,
@@ -213,7 +214,8 @@ impl<'a> LayoutBuilder<'a> {
                 x: params.margin_left,
                 y: params.page_height - (params.margin_top + params.pt_size + params.leading),
             },
-            pages: vec![Page::new(params.page_width, params.page_height)],
+            current_page: Page::new(params.page_width, params.page_height),
+            pages: vec![],
             params,
             font: Font::ROMAN,
             font_data,
@@ -304,9 +306,7 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         if config.page_height.is_some() || config.page_width.is_some() {
-            self.pages.pop();
-            self.pages
-                .push(Page::new(self.params.page_width, self.params.page_height));
+            self.current_page = self.new_page();
             self.set_cursor_top_left();
         }
     }
@@ -375,9 +375,7 @@ impl<'a> LayoutBuilder<'a> {
                     },
 
                     Command::PageBreak => {
-                        let (width, height) = self.next_page_dims();
-
-                        self.pages.push(Page::new(width, height));
+                        self.finish_page();
                         self.set_cursor_top_left();
                     }
                     Command::Leading(arg) => {
@@ -404,18 +402,22 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         // Don't emit a completely blank page that was only added because of a line break
-        if self
-            .pages
-            .last()
-            .expect("should have at least one page")
-            .boxes
-            .len()
-            == 0
-        {
-            self.pages.pop();
+        if self.current_page.boxes.len() > 0 {
+            self.finish_page();
         }
 
         Ok(Layout { pages: self.pages })
+    }
+
+    fn new_page(&mut self) -> Page {
+        let (width, height) = self.next_page_dims();
+        Page::new(width, height)
+    }
+
+    fn finish_page(&mut self) {
+        let new_page = self.new_page();
+        let last_page = std::mem::replace(&mut self.current_page, new_page);
+        self.pages.push(last_page);
     }
 
     fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) -> Result<(), BurroError> {
@@ -425,38 +427,22 @@ impl<'a> LayoutBuilder<'a> {
             self.cursor.x = self.params.margin_left + self.params.par_indent;
         }
 
-        let mut page = self.pages.pop().expect("should have at least one page");
-        self.handle_style_blocks(paragraph, &mut page)?;
-        self.pages.push(page);
+        self.handle_style_blocks(paragraph)?;
         self.finish_paragraph();
         self.cursor.x = self.params.margin_left;
 
-        let mut page = self.pages.pop().expect("should have at least one page");
-        self.advance_y_cursor(
-            self.params.leading + self.params.pt_size + self.params.par_space,
-            &mut page,
-        );
+        self.advance_y_cursor(self.params.leading + self.params.pt_size + self.params.par_space);
 
-        self.pages.push(page);
         self.par_counter += 1;
 
         Ok(())
     }
 
     fn finish_paragraph(&mut self) {
-        let mut page = self
-            .pages
-            .pop()
-            .expect("should have at least one page stored, please file a bug");
-        self.emit_remaining_line(&mut page);
-        self.pages.push(page);
+        self.emit_remaining_line();
     }
 
-    fn handle_style_blocks(
-        &mut self,
-        blocks: &'a [StyleBlock],
-        page: &mut Page,
-    ) -> Result<(), BurroError> {
+    fn handle_style_blocks(&mut self, blocks: &'a [StyleBlock]) -> Result<(), BurroError> {
         for block in blocks {
             match block {
                 StyleBlock::Text(words) => {
@@ -498,10 +484,10 @@ impl<'a> LayoutBuilder<'a> {
                                 };
                             }
 
-                            self.emit_line(current_line, page, false);
+                            self.emit_line(current_line, false);
 
                             self.cursor.x = self.params.margin_left;
-                            self.advance_y_cursor(self.params.leading + self.params.pt_size, page);
+                            self.advance_y_cursor(self.params.leading + self.params.pt_size);
 
                             current_line = vec![last_word];
                         }
@@ -511,35 +497,31 @@ impl<'a> LayoutBuilder<'a> {
                 }
                 StyleBlock::Bold(blocks) => {
                     if self.font.intersects(Font::BOLD) {
-                        self.handle_style_blocks(blocks, page)?
+                        self.handle_style_blocks(blocks)?
                     } else {
                         self.font = self.font | Font::BOLD;
-                        self.handle_style_blocks(blocks, page)?;
+                        self.handle_style_blocks(blocks)?;
                         self.font = self.font - Font::BOLD;
                     }
                 }
                 StyleBlock::Italic(blocks) => {
                     if self.font.intersects(Font::ITALIC) {
-                        self.handle_style_blocks(blocks, page)?
+                        self.handle_style_blocks(blocks)?
                     } else {
                         self.font = self.font | Font::ITALIC;
-                        self.handle_style_blocks(blocks, page)?;
+                        self.handle_style_blocks(blocks)?;
                         self.font = self.font - Font::ITALIC;
                     }
                 }
 
-                StyleBlock::Command(change) => self.handle_style_change(change, page)?,
+                StyleBlock::Command(change) => self.handle_style_change(change)?,
             }
         }
 
         Ok(())
     }
 
-    fn handle_style_change(
-        &mut self,
-        change: &StyleChange,
-        page: &mut Page,
-    ) -> Result<(), BurroError> {
+    fn handle_style_change(&mut self, change: &StyleChange) -> Result<(), BurroError> {
         match change {
             // To decide: do we want to automatically change the leading,
             // or ask the user to change it themselves?
@@ -559,25 +541,25 @@ impl<'a> LayoutBuilder<'a> {
                 }
             },
             StyleChange::Break => {
-                self.emit_remaining_line(page);
+                self.emit_remaining_line();
                 self.cursor.x = self.params.margin_left;
-                self.advance_y_cursor(self.params.leading + self.params.pt_size, page);
+                self.advance_y_cursor(self.params.leading + self.params.pt_size);
             }
             StyleChange::VSpace(space) => {
-                self.emit_remaining_line(page);
-                self.advance_y_cursor(*space, page);
+                self.emit_remaining_line();
+                self.advance_y_cursor(*space);
             }
             StyleChange::HSpace(arg) => match arg {
                 ResetArg::Explicit(space) => {
-                    self.emit_remaining_line(page);
+                    self.emit_remaining_line();
                     self.cursor.x += space;
                     if self.cursor.x >= self.params.page_width - self.params.margin_right {
                         self.cursor.x = self.params.margin_left;
-                        self.advance_y_cursor(self.params.leading + self.params.pt_size, page);
+                        self.advance_y_cursor(self.params.leading + self.params.pt_size);
                     }
                 }
                 ResetArg::Reset => {
-                    self.emit_remaining_line(page);
+                    self.emit_remaining_line();
                     self.cursor.x = self.params.margin_left;
                 }
             },
@@ -586,16 +568,16 @@ impl<'a> LayoutBuilder<'a> {
         Ok(())
     }
 
-    fn emit_remaining_line(&mut self, page: &mut Page) {
+    fn emit_remaining_line(&mut self) {
         let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
-        self.emit_line(remaining_line, page, true);
+        self.emit_line(remaining_line, true);
     }
 
-    fn emit_word(&mut self, word: &Word, page: &mut Page) {
+    fn emit_word(&mut self, word: &Word) {
         for (ix, glyph) in word.char_infos.iter().enumerate() {
             let pos = word.char_boxes[ix];
 
-            page.boxes.push(BurroBox::Glyph {
+            self.current_page.boxes.push(BurroBox::Glyph {
                 pos: Position {
                     x: self.cursor.x,
                     y: self.cursor.y,
@@ -608,12 +590,12 @@ impl<'a> LayoutBuilder<'a> {
             self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size);
             let delta_y = font_units_to_points(pos.y_advance, word.upem, word.pt_size);
             if delta_y > 0. {
-                self.advance_y_cursor(delta_y, page);
+                self.advance_y_cursor(delta_y);
             }
         }
     }
 
-    fn emit_line(&mut self, line: Vec<Word>, page: &mut Page, last: bool) {
+    fn emit_line(&mut self, line: Vec<Word>, last: bool) {
         if line.len() == 0 {
             return;
         }
@@ -644,7 +626,7 @@ impl<'a> LayoutBuilder<'a> {
             .val;
 
         if max_size > starting_size {
-            self.advance_y_cursor(max_size - starting_size, page);
+            self.advance_y_cursor(max_size - starting_size);
         }
 
         match self.params.alignment {
@@ -653,7 +635,7 @@ impl<'a> LayoutBuilder<'a> {
             Alignment::Left => {
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page),
+                        TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
@@ -668,7 +650,7 @@ impl<'a> LayoutBuilder<'a> {
 
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page),
+                        TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => {
                             if last {
                                 self.cursor.x += self.params.space_width;
@@ -686,7 +668,7 @@ impl<'a> LayoutBuilder<'a> {
 
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page),
+                        TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
@@ -698,7 +680,7 @@ impl<'a> LayoutBuilder<'a> {
 
                 for word in line {
                     match word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word, page),
+                        TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
@@ -728,14 +710,11 @@ impl<'a> LayoutBuilder<'a> {
         (width, height)
     }
 
-    fn advance_y_cursor(&mut self, delta_y: f64, page: &mut Page) {
+    fn advance_y_cursor(&mut self, delta_y: f64) {
         self.cursor.y -= delta_y;
 
         if self.cursor.y < self.params.margin_bottom {
-            let (width, height) = self.next_page_dims();
-            let final_page = std::mem::replace(page, Page::new(width, height));
-            self.pages.push(final_page);
-
+            self.finish_page();
             self.cursor.y = self.params.page_height
                 - (self.params.margin_top + self.params.pt_size + self.params.leading);
         }
