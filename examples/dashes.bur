@@ -1,0 +1,4 @@
+.start
+We can use the double-hyphen--like this--for an en dash, and the triple hyphen---like this---for an em dash. It's just like TeX!
+
+It's also possible to add spaces around the dashes -- like this -- and have the spaces appear in the output.

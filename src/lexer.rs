@@ -17,6 +17,13 @@ pub enum Token {
 fn lex_rest(chars: &[char]) -> Vec<Token> {
     match chars {
         [] => vec![],
+        ['[', '-', ']', rest @ ..] => {
+            let mut remaining = lex_rest(&rest);
+            remaining.insert(0, Token::CloseSquare);
+            remaining.insert(0, Token::Reset);
+            remaining.insert(0, Token::OpenSquare);
+            return remaining;
+        }
         ['[', rest @ ..] => {
             let mut remaining = lex_rest(&rest);
             remaining.insert(0, Token::OpenSquare);
@@ -38,11 +45,6 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
         ['\n', rest @ ..] | ['\r', '\n', rest @ ..] => {
             let mut remaining = lex_rest(&rest);
             remaining.insert(0, Token::Newline);
-            return remaining;
-        }
-        ['-', rest @ ..] => {
-            let mut remaining = lex_rest(&rest);
-            remaining.insert(0, Token::Reset);
             return remaining;
         }
         [' ', rest @ ..] | ['\t', rest @ ..] => {
@@ -119,6 +121,19 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
                     current.push(tokens[0]);
                     return accumulator(current, rest);
                 }
+            }
+            ['-', '-', '-', rest @ ..] => {
+                let mut current = current;
+                // This is actually an em dash, not a hyphen
+                current.push('—');
+                return accumulator(current, rest);
+            }
+
+            ['-', '-', rest @ ..] => {
+                let mut current = current;
+                // This is actually an en dash, not a hyphen
+                current.push('–');
+                return accumulator(current, rest);
             }
 
             ['\\', ch, rest @ ..] => {
@@ -237,6 +252,28 @@ mod tests {
 c ; d
 ; one comment
 ; another one";
+
+        assert_eq!(expected, lex(input));
+    }
+
+    #[test]
+    fn lexing_dashes() {
+        let expected = vec![
+            // These all look the same in a monospaced terminal font,
+            // but they're actually an em dash, an en dash, and a hyphen
+            Token::Word("—".to_string()),
+            Token::Space,
+            Token::Word("–".to_string()),
+            Token::Space,
+            Token::Word("-".to_string()),
+            Token::Space,
+            Token::Command("hello".to_string()),
+            Token::OpenSquare,
+            Token::Reset,
+            Token::CloseSquare,
+        ];
+
+        let input = "--- -- - .hello[-]";
 
         assert_eq!(expected, lex(input));
     }
