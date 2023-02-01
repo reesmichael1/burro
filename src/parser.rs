@@ -45,6 +45,8 @@ pub enum StyleBlock {
     Italic(Vec<StyleBlock>),
     Command(StyleChange),
     Text(Vec<TextUnit>),
+    Quote(Vec<StyleBlock>),
+    OpenQuote(Vec<StyleBlock>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -198,6 +200,10 @@ pub enum ParseError {
     MalformedStrCommand,
     #[error("encountered reset command in invalid context")]
     InvalidReset,
+    #[error("malformed quote command")]
+    MalformedQuote,
+    #[error("malformed open quote command")]
+    MalformedOpenQuote,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -436,6 +442,20 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
                     pop_spaces(rem),
                 )
             }
+            "quote" => match tokens {
+                [Token::Command(_), Token::OpenSquare, rest @ ..] => {
+                    let (inner, rem) = parse_style_block_list(rest)?;
+                    (StyleBlock::Quote(inner), rem)
+                }
+                _ => return Err(ParseError::MalformedQuote),
+            },
+            "openquote" => match tokens {
+                [Token::Command(_), Token::OpenSquare, rest @ ..] => {
+                    let (inner, rem) = parse_style_block_list(rest)?;
+                    (StyleBlock::OpenQuote(inner), rem)
+                }
+                _ => return Err(ParseError::MalformedQuote),
+            },
             _ => Err(ParseError::UnknownCommand(cmd.to_string()))?,
         },
         [Token::Newline, rest @ ..] => {

@@ -3,6 +3,7 @@ mod fontmap;
 mod fonts;
 mod layout;
 mod lexer;
+mod literals;
 mod parser;
 mod util;
 mod writer;

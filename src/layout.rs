@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
+use crate::literals;
 use crate::parser;
 use crate::parser::{
     Command, DocConfig, Document, Node, ResetArg, StyleBlock, StyleChange, TextUnit,
@@ -515,8 +516,39 @@ impl<'a> LayoutBuilder<'a> {
                 }
 
                 StyleBlock::Command(change) => self.handle_style_change(change)?,
+                StyleBlock::Quote(inner) => {
+                    self.generate_word(&literals::OPEN_QUOTE)?;
+                    self.handle_style_blocks(inner)?;
+                    self.generate_word(&literals::CLOSE_QUOTE)?;
+                }
+                StyleBlock::OpenQuote(inner) => {
+                    self.generate_word(&literals::OPEN_QUOTE)?;
+                    self.handle_style_blocks(inner)?;
+                }
             }
         }
+
+        Ok(())
+    }
+
+    fn generate_word(&mut self, word: &'a TextUnit) -> Result<(), BurroError> {
+        let font_data = self
+            .font_data
+            .get(&(self.params.font_family.clone(), self.font))
+            .ok_or(BurroError::UnmappedFont)?
+            .clone();
+
+        let face =
+            ttf_parser::Face::parse(&font_data, 0).map_err(|_| BurroError::FaceParsingError)?;
+
+        let face = rustybuzz::Face::from_face(face).ok_or(BurroError::FaceParsingError)?;
+
+        let font_id = self
+            .font_map
+            .font_id(&self.params.font_family, self.font.font_num());
+
+        self.current_line
+            .push(Word::new(word, &face, font_id, self.params.pt_size));
 
         Ok(())
     }

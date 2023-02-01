@@ -1,0 +1,11 @@
+.start
+; We'll create a new command specifically for quoting
+; Once we have internationalization, this will let us choose the quote characters
+; based on the document language.
+.quote[This is a very profound quote,] said a very wise person.
+
+But is it possible to have quotes begin in the line? .quote[It most certainly is!] said Burro.
+
+.openquote[There's a separate command for only showing the opening quote, which is useful (and correct) when the quote spans multiple paragraphs.]
+
+.quote[This quote continues and finishes on this line, so now we have a closing quote.]
