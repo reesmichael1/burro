@@ -6,7 +6,7 @@
 .align[center]
 
 .pt_size[18]
-.bold[Burro]
+.smallcaps[Burro]
 
 .align[justify]
 ; Lines beginning with a ; are commented out (have no effect on the output)

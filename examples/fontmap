@@ -1,9 +1,10 @@
 [families]
 [families.default]
-roman="/usr/share/fonts/EBGaramond12-otf/EBGaramond-Regular.otf"
-bold="/usr/share/fonts/EBGaramond12-otf/EBGaramond-Bold.otf"
-italic="/usr/share/fonts/EBGaramond12-otf/EBGaramond-Italic.otf"
-bold_italic="/usr/share/fonts/EBGaramond12-otf/EBGaramond-BoldItalic.otf"
+roman="/usr/share/fonts/OTF/Bembo/Bembo.otf"
+bold="/usr/share/fonts/OTF/Bembo/Bembo-Bold.otf"
+italic="/usr/share/fonts/OTF/Bembo/Bembo-Italic.otf"
+bold_italic="/usr/share/fonts/OTF/Bembo/Bembo-BoldItalic.otf"
+smallcaps="/usr/share/fonts/OTF/Bembo/Bembo-SC.otf"
 
 [families.DejaVuSans]
 roman="/usr/share/fonts/TTF/DejaVuSans.ttf"

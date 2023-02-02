@@ -194,6 +194,25 @@ fn load_font_data<'a>(
         if let Some(p) = &family.bold_italic {
             font_data.insert((name.clone(), Font::BOLD_ITALIC), std::fs::read(p)?);
         }
+
+        if let Some(p) = &family.smallcaps {
+            font_data.insert((name.clone(), Font::SMALLCAPS), std::fs::read(p)?);
+        }
+
+        if let Some(p) = &family.bold_smallcaps {
+            font_data.insert((name.clone(), Font::BOLD_SMALLCAPS), std::fs::read(p)?);
+        }
+
+        if let Some(p) = &family.italic_smallcaps {
+            font_data.insert((name.clone(), Font::ITALIC_SMALLCAPS), std::fs::read(p)?);
+        }
+
+        if let Some(p) = &family.bold_italic_smallcaps {
+            font_data.insert(
+                (name.clone(), Font::BOLD_ITALIC_SMALLCAPS),
+                std::fs::read(p)?,
+            );
+        }
     }
 
     Ok(font_data)
@@ -525,6 +544,15 @@ impl<'a> LayoutBuilder<'a> {
                         self.font = self.font | Font::ITALIC;
                         self.handle_style_blocks(blocks)?;
                         self.font = self.font - Font::ITALIC;
+                    }
+                }
+                StyleBlock::Smallcaps(blocks) => {
+                    if self.font.intersects(Font::SMALLCAPS) {
+                        self.handle_style_blocks(blocks)?
+                    } else {
+                        self.font = self.font | Font::SMALLCAPS;
+                        self.handle_style_blocks(blocks)?;
+                        self.font = self.font - Font::SMALLCAPS;
                     }
                 }
 

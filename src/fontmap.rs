@@ -30,6 +30,14 @@ impl FontMap {
             &family.bold
         } else if font_num == Font::BOLD_ITALIC.font_num() {
             &family.bold_italic
+        } else if font_num == Font::SMALLCAPS.font_num() {
+            &family.smallcaps
+        } else if font_num == Font::BOLD_SMALLCAPS.font_num() {
+            &family.bold_smallcaps
+        } else if font_num == Font::ITALIC_SMALLCAPS.font_num() {
+            &family.italic_smallcaps
+        } else if font_num == Font::BOLD_ITALIC_SMALLCAPS.font_num() {
+            &family.bold_italic_smallcaps
         } else {
             unreachable!()
         }
@@ -42,6 +50,10 @@ pub struct Fonts {
     pub italic: Option<PathBuf>,
     pub roman: Option<PathBuf>,
     pub bold_italic: Option<PathBuf>,
+    pub smallcaps: Option<PathBuf>,
+    pub bold_smallcaps: Option<PathBuf>,
+    pub italic_smallcaps: Option<PathBuf>,
+    pub bold_italic_smallcaps: Option<PathBuf>,
 }
 
 pub fn parse(path: &Option<PathBuf>, bur_file: &Path) -> Result<FontMap, BurroError> {
@@ -86,6 +98,10 @@ fn parse_fonts(family: &toml::Value) -> Result<Fonts, BurroError> {
             "bold" => fonts.bold = load_fontmap_path(path)?,
             "italic" => fonts.italic = load_fontmap_path(path)?,
             "bold_italic" => fonts.bold_italic = load_fontmap_path(path)?,
+            "smallcaps" => fonts.smallcaps = load_fontmap_path(path)?,
+            "bold_smallcaps" => fonts.bold_smallcaps = load_fontmap_path(path)?,
+            "italic_smallcaps" => fonts.italic_smallcaps = load_fontmap_path(path)?,
+            "bold_italic_smallcaps" => fonts.bold_italic_smallcaps = load_fontmap_path(path)?,
             _ => return Err(BurroError::UnknownFont(font.to_string())),
         }
     }

@@ -43,6 +43,7 @@ pub enum ResetArg<T> {
 pub enum StyleBlock {
     Bold(Vec<StyleBlock>),
     Italic(Vec<StyleBlock>),
+    Smallcaps(Vec<StyleBlock>),
     Command(StyleChange),
     Text(Vec<TextUnit>),
     Quote(Vec<StyleBlock>),
@@ -216,6 +217,8 @@ pub enum ParseError {
     MalformedQuote,
     #[error("malformed open quote command")]
     MalformedOpenQuote,
+    #[error("malformed smallcaps command")]
+    MalformedSmallcaps,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -383,7 +386,17 @@ fn parse_italic_command(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), Pars
             let (inner, rem) = parse_style_block_list(rest)?;
             Ok((StyleBlock::Italic(inner), rem))
         }
-        _ => Err(ParseError::MalformedBold),
+        _ => Err(ParseError::MalformedItalic),
+    }
+}
+
+fn parse_smallcaps_command(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseError> {
+    match tokens {
+        [Token::OpenSquare, rest @ ..] => {
+            let (inner, rem) = parse_style_block_list(rest)?;
+            Ok((StyleBlock::Smallcaps(inner), rem))
+        }
+        _ => Err(ParseError::MalformedSmallcaps),
     }
 }
 
@@ -432,6 +445,7 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
             "bold" => parse_bold_command(rest)?,
             "italic" => parse_italic_command(rest)?,
+            "smallcaps" => parse_smallcaps_command(rest)?,
             "pt_size" => parse_point_size(rest)?,
             "break" => (
                 StyleBlock::Command(StyleChange::Break),
