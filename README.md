@@ -20,7 +20,7 @@ A digital typesetting language that's easy to type.
 ; to its previous value (here, 12 pts)
 .pt_size[-]
 This is a demonstration of .italic[Burro], a new typesetting language 
-designed for text\-heavy documents.
+designed for text-heavy documents.
 
 Burro is designed to be easy to type while retaining complete control 
 over the output. It aims to be a middle ground between the limited power 
