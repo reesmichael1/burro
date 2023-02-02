@@ -1,5 +1,7 @@
 [families]
 [families.default]
+# Downloaded from https://www.dfonts.org/fonts/bembo-font/
+# This version has all of the individual fonts we'll want
 roman="/usr/share/fonts/OTF/Bembo/Bembo.otf"
 bold="/usr/share/fonts/OTF/Bembo/Bembo-Bold.otf"
 italic="/usr/share/fonts/OTF/Bembo/Bembo-Italic.otf"
