@@ -88,6 +88,7 @@ pub struct DocConfig {
     pub family: Option<String>,
     pub font: Option<Font>,
     pub indent_first: bool,
+    pub alignment: Option<Alignment>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
@@ -162,6 +163,11 @@ impl DocConfig {
 
     fn with_indent_first(mut self, indent_first: bool) -> Self {
         self.indent_first = indent_first;
+        self
+    }
+
+    fn with_alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = Some(alignment);
         self
     }
 }
@@ -499,6 +505,8 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
 
                     tokens = rem;
                 }
+                // This command is only available in the config section
+                // (at least for now), so handle it separately
                 "indent_first" => {
                     config = config.with_indent_first(true);
                     tokens = &tokens[1..];
@@ -533,6 +541,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         }
                         Node::Command(Command::Font(ResetArg::Explicit(font))) => {
                             config = config.with_font(font);
+                        }
+                        Node::Command(Command::Align(ResetArg::Explicit(alignment))) => {
+                            config = config.with_alignment(alignment);
                         }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }
@@ -834,6 +845,7 @@ hello";
 .page_height[11in]
 .page_width[8.5in]
 .indent_first
+.align[center]
 .start
 Hello world!";
 
@@ -843,7 +855,8 @@ Hello world!";
                 .with_pt_size(18.)
                 .with_page_width(612.)
                 .with_page_height(792.)
-                .with_indent_first(true),
+                .with_indent_first(true)
+                .with_alignment(Alignment::Center),
             nodes: vec![Node::Paragraph(vec![words_to_text(&["Hello", "world!"])])],
         };
 

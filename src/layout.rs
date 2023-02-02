@@ -56,6 +56,17 @@ enum Alignment {
     Justify,
 }
 
+impl From<&parser::Alignment> for Alignment {
+    fn from(other: &parser::Alignment) -> Self {
+        match other {
+            parser::Alignment::Left => Self::Left,
+            parser::Alignment::Center => Self::Center,
+            parser::Alignment::Right => Self::Right,
+            parser::Alignment::Justify => Self::Justify,
+        }
+    }
+}
+
 struct Word<'a> {
     contents: &'a TextUnit,
     char_boxes: Vec<GlyphPosition>,
@@ -308,6 +319,10 @@ impl<'a> LayoutBuilder<'a> {
             self.font = font;
         }
 
+        if let Some(alignment) = &config.alignment {
+            self.params.alignment = alignment.into();
+        }
+
         self.indent_first = config.indent_first;
 
         if config.page_height.is_some() || config.page_width.is_some() {
@@ -323,13 +338,7 @@ impl<'a> LayoutBuilder<'a> {
             match node {
                 Node::Command(c) => match c {
                     Command::Align(arg) => match arg {
-                        ResetArg::Explicit(dir) => match dir {
-                            parser::Alignment::Left => self.set_alignment(Alignment::Left),
-                            parser::Alignment::Right => self.set_alignment(Alignment::Right),
-                            parser::Alignment::Center => self.set_alignment(Alignment::Center),
-                            parser::Alignment::Justify => self.set_alignment(Alignment::Justify),
-                        },
-
+                        ResetArg::Explicit(dir) => self.set_alignment(dir.into()),
                         ResetArg::Reset => {
                             if let Some(alignment) = self.alignments.pop() {
                                 self.params.alignment = alignment;
