@@ -65,6 +65,6 @@ I first worked on Burro in 2018, but couldn't settle on a syntax I liked, so the
 
 ## Roadmap
 
-These are many more features planned for Buro, including an extensive list of typographic commands, user defined variables, and more. See the file `examples/syntax.bur` for some of the current long term vision. Burro is not yet tested on non-Latin scripts (or even non-English languages), but good international support is a blocker for the 1.0 release.
+These are many more features planned for Burro, including an extensive list of typographic commands, user defined variables, and more. See the file `examples/syntax.bur` for some of the current long term vision. Burro is not yet tested on non-Latin scripts (or even non-English languages), but good international support is a blocker for the 1.0 release.
 
 Burro is currently undocumented beyond the `examples` directory, but that will improve over time.
