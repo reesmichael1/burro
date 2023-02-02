@@ -1,7 +1,7 @@
 .margins[2in]
 .leading[0.75P]
 .start
-This is an example of a paragraph with higher\-than\-normal leading. This is more than most documents will use, but it's good to have the option. We're using 0.75 picas, or 9 points, or 1/8 of an inch, here.
+This is an example of a paragraph with higher-than-normal leading. This is more than most documents will use, but it's good to have the option. We're using 0.75 picas, or 9 points, or 1/8 of an inch, here.
 
 .leading[2pt]
 Now, we're back to a more standard 2 points. Once this line is long enough, you'll see how the lines in the paragraph are closer together than before.

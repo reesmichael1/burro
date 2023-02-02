@@ -13,4 +13,4 @@ Now, we're aligned along the right margin. If I keep typing, you'll see that the
 .italic[This line should be italic now. .bold[And now it's both bold and italic!]] We can continue on, back in the usual Roman now....
 
 .align[left]
-Now we're left\-aligned, or ragged right. The text along the left side of this paragraph will be flush with the left margin, while the right side will have lots of breaks. Remember typing all of those middle school essays in Microsoft Word and having everything left\-justified? Ick. I'm glad those days are behind us!
+Now we're left-aligned, or ragged right. The text along the left side of this paragraph will be flush with the left margin, while the right side will have lots of breaks. Remember typing all of those middle school essays in Microsoft Word and having everything left-justified? Ick. I'm glad those days are behind us!
