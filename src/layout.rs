@@ -160,6 +160,7 @@ pub struct LayoutBuilder<'a> {
     par_spaces: Vec<f64>,
     families: Vec<String>,
     fonts: Vec<Font>,
+    indent_first: bool,
 }
 
 fn load_font_data<'a>(
@@ -236,6 +237,7 @@ impl<'a> LayoutBuilder<'a> {
             par_spaces: vec![],
             families: vec![],
             fonts: vec![],
+            indent_first: false,
         })
     }
 
@@ -305,6 +307,8 @@ impl<'a> LayoutBuilder<'a> {
         if let Some(font) = config.font {
             self.font = font;
         }
+
+        self.indent_first = config.indent_first;
 
         if config.page_height.is_some() || config.page_width.is_some() {
             self.current_page = self.new_page();
@@ -422,7 +426,7 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) -> Result<(), BurroError> {
-        if self.par_counter == 0 {
+        if self.par_counter == 0 && !self.indent_first {
             self.cursor.x = self.params.margin_left;
         } else {
             self.cursor.x = self.params.margin_left + self.params.par_indent;

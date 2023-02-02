@@ -87,6 +87,7 @@ pub struct DocConfig {
     pub space_width: Option<f64>,
     pub family: Option<String>,
     pub font: Option<Font>,
+    pub indent_first: bool,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
@@ -156,6 +157,11 @@ impl DocConfig {
 
     fn with_font(mut self, font: Font) -> Self {
         self.font = Some(font);
+        self
+    }
+
+    fn with_indent_first(mut self, indent_first: bool) -> Self {
+        self.indent_first = indent_first;
         self
     }
 }
@@ -493,6 +499,10 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
 
                     tokens = rem;
                 }
+                "indent_first" => {
+                    config = config.with_indent_first(true);
+                    tokens = &tokens[1..];
+                }
                 _ => {
                     let (command, rem) = parse_command(name.to_string(), tokens)?;
 
@@ -823,6 +833,7 @@ hello";
 .pt_size[18]
 .page_height[11in]
 .page_width[8.5in]
+.indent_first
 .start
 Hello world!";
 
@@ -831,7 +842,8 @@ Hello world!";
                 .with_margins(144.0)
                 .with_pt_size(18.)
                 .with_page_width(612.)
-                .with_page_height(792.),
+                .with_page_height(792.)
+                .with_indent_first(true),
             nodes: vec![Node::Paragraph(vec![words_to_text(&["Hello", "world!"])])],
         };
 
