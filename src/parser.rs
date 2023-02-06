@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use lazy_static::lazy_static;
 use regex::Regex;
 use thiserror::Error;
@@ -45,7 +47,7 @@ pub enum StyleBlock {
     Italic(Vec<StyleBlock>),
     Smallcaps(Vec<StyleBlock>),
     Command(StyleChange),
-    Text(Vec<TextUnit>),
+    Text(Vec<Arc<TextUnit>>),
     Quote(Vec<StyleBlock>),
     OpenQuote(Vec<StyleBlock>),
 }
@@ -325,23 +327,23 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
 }
 
 fn parse_text(
-    words: Vec<TextUnit>,
+    words: Vec<Arc<TextUnit>>,
     tokens: &[Token],
 ) -> Result<(StyleBlock, &[Token]), ParseError> {
     let mut words = words;
     match tokens {
         [Token::Word(word), rest @ ..] => {
-            words.push(TextUnit::Str(word.to_string()));
+            words.push(Arc::new(TextUnit::Str(word.to_string())));
             parse_text(words, rest)
         }
         [Token::Newline, Token::Word(word), rest @ ..] => {
-            words.push(TextUnit::Space);
-            words.push(TextUnit::Str(word.to_string()));
+            words.push(Arc::new(TextUnit::Space));
+            words.push(Arc::new(TextUnit::Str(word.to_string())));
             parse_text(words, rest)
         }
         [Token::Space, Token::Newline, ..] => parse_text(words, &tokens[1..]),
         [Token::Space, rest @ ..] => {
-            words.push(TextUnit::Space);
+            words.push(Arc::new(TextUnit::Space));
             parse_text(words, rest)
         }
         _ => Ok((StyleBlock::Text(words), tokens)),
@@ -440,8 +442,10 @@ fn parse_style_block_list(tokens: &[Token]) -> Result<(Vec<StyleBlock>, &[Token]
 
 fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]), ParseError> {
     let (block, rem) = match tokens {
-        [Token::Word(word), rest @ ..] => parse_text(vec![TextUnit::Str(word.to_string())], rest)?,
-        [Token::Space, rest @ ..] => parse_text(vec![TextUnit::Space], rest)?,
+        [Token::Word(word), rest @ ..] => {
+            parse_text(vec![Arc::new(TextUnit::Str(word.to_string()))], rest)?
+        }
+        [Token::Space, rest @ ..] => parse_text(vec![Arc::new(TextUnit::Space)], rest)?,
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
             "bold" => parse_bold_command(rest)?,
             "italic" => parse_italic_command(rest)?,
@@ -661,12 +665,12 @@ mod tests {
         let mut converted = vec![];
         for (ix, word) in words.iter().enumerate() {
             if *word == " " {
-                converted.push(TextUnit::Space);
+                converted.push(Arc::new(TextUnit::Space));
                 continue;
             }
-            converted.push(TextUnit::Str(word.to_string()));
+            converted.push(Arc::new(TextUnit::Str(word.to_string())));
             if ix != words.len() - 1 {
-                converted.push(TextUnit::Space);
+                converted.push(Arc::new(TextUnit::Space));
             }
         }
         StyleBlock::Text(converted)
@@ -676,11 +680,11 @@ mod tests {
         let mut converted = vec![];
         for word in words.iter() {
             if *word == " " {
-                converted.push(TextUnit::Space);
+                converted.push(Arc::new(TextUnit::Space));
                 continue;
             }
-            converted.push(TextUnit::Str(word.to_string()));
-            converted.push(TextUnit::Space);
+            converted.push(Arc::new(TextUnit::Str(word.to_string())));
+            converted.push(Arc::new(TextUnit::Space));
         }
         StyleBlock::Text(converted)
     }
@@ -798,9 +802,9 @@ a .pt_size[14] b";
     #[test]
     fn mid_doc_style_change() -> Result<(), ParseError> {
         let input = ".start
-a 
+a
 
-.pt_size[14] 
+.pt_size[14]
 b";
 
         let expected = Document {
@@ -971,9 +975,9 @@ b";
     fn newlines_within_paragraphs() -> Result<(), ParseError> {
         let input = ".start
 Hello
-world 
-lots 
-of 
+world
+lots
+of
 lines";
 
         let expected = Document {

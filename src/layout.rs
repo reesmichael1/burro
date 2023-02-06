@@ -1,4 +1,9 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use hyphenation::*;
+use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
+use rustybuzz::{ttf_parser, Face};
 
 use crate::error::BurroError;
 use crate::fontmap::FontMap;
@@ -8,8 +13,6 @@ use crate::parser;
 use crate::parser::{
     Command, DocConfig, Document, Node, ResetArg, StyleBlock, StyleChange, TextUnit,
 };
-use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
-use rustybuzz::{ttf_parser, Face};
 
 #[derive(Debug, PartialEq)]
 pub struct Layout {
@@ -49,6 +52,7 @@ pub struct Position {
     pub y: f64,
 }
 
+#[derive(PartialEq)]
 enum Alignment {
     Left,
     Right,
@@ -67,8 +71,9 @@ impl From<&parser::Alignment> for Alignment {
     }
 }
 
-struct Word<'a> {
-    contents: &'a TextUnit,
+#[derive(Clone)]
+struct Word {
+    contents: Arc<TextUnit>,
     char_boxes: Vec<GlyphPosition>,
     char_infos: Vec<GlyphInfo>,
     font_id: u32,
@@ -78,9 +83,9 @@ struct Word<'a> {
     upem: i32,
 }
 
-impl<'a> Word<'a> {
-    fn new(word: &'a TextUnit, face: &Face, font_id: u32, pt_size: f64) -> Self {
-        match word {
+impl Word {
+    fn new(word: Arc<TextUnit>, face: &Face, font_id: u32, pt_size: f64) -> Self {
+        match &*word {
             TextUnit::Str(s) => {
                 let mut in_buf = UnicodeBuffer::new();
                 in_buf.push_str(&s);
@@ -118,9 +123,16 @@ impl<'a> Word<'a> {
     }
 
     fn is_space(&self) -> bool {
-        match self.contents {
+        match *self.contents {
             TextUnit::Space => true,
             _ => false,
+        }
+    }
+
+    fn str(&self) -> &str {
+        match &*self.contents {
+            TextUnit::Str(s) => &s,
+            TextUnit::Space => unreachable!(),
         }
     }
 }
@@ -140,6 +152,7 @@ struct BurroParams {
     par_space: f64,
     font_family: String,
     par_indent: f64,
+    hyphenate: bool,
 }
 
 #[derive(Debug)]
@@ -156,7 +169,7 @@ pub struct LayoutBuilder<'a> {
     font_data: HashMap<(String, Font), Vec<u8>>,
     font_map: &'a FontMap,
     current_page: Page,
-    current_line: Vec<Word<'a>>,
+    current_line: Vec<Word>,
     par_counter: usize,
     alignments: Vec<Alignment>,
     margins: Vec<f64>,
@@ -172,6 +185,7 @@ pub struct LayoutBuilder<'a> {
     families: Vec<String>,
     fonts: Vec<Font>,
     indent_first: bool,
+    hyphenation: Standard,
 }
 
 fn load_font_data<'a>(
@@ -236,6 +250,7 @@ impl<'a> LayoutBuilder<'a> {
             space_width: pt_size / 4.,
             font_family: String::from("default"),
             par_indent: 2. * pt_size,
+            hyphenate: true,
         };
 
         let font_data = load_font_data(font_map)?;
@@ -268,6 +283,8 @@ impl<'a> LayoutBuilder<'a> {
             families: vec![],
             fonts: vec![],
             indent_first: false,
+            hyphenation: Standard::from_embedded(Language::EnglishUS)
+                .expect("hyphenation dictionary should be embedded"),
         })
     }
 
@@ -503,13 +520,71 @@ impl<'a> LayoutBuilder<'a> {
                     let mut current_line = std::mem::replace(&mut self.current_line, vec![]);
 
                     for word in words {
-                        current_line.push(Word::new(word, &face, font_id, self.params.pt_size));
+                        current_line.push(Word::new(
+                            word.clone(),
+                            &face,
+                            font_id,
+                            self.params.pt_size,
+                        ));
                         if self.total_line_width(&current_line)
                             > self.params.page_width - self.cursor.x - self.params.margin_right
                         {
                             let mut last_word = current_line
                                 .pop()
                                 .expect("still need to handle words longer than the line");
+
+                            if self.params.alignment == Alignment::Justify && self.params.hyphenate
+                            {
+                                let s = last_word.str();
+                                let hyphenated = self.hyphenation.hyphenate(s);
+                                let breaks = &hyphenated.breaks;
+                                let mut best_spacing = self.justified_space_width(&current_line);
+                                let mut best_start: Option<Word> = None;
+                                let mut best_rest: Option<Word> = None;
+
+                                if breaks.len() > 0 {
+                                    for b in breaks {
+                                        let mut start = s[0..*b].to_string();
+                                        start.push_str("-");
+                                        let start = TextUnit::Str(start);
+                                        let rest = TextUnit::Str(s[*b..].to_string());
+                                        let start = Word::new(
+                                            Arc::new(start),
+                                            &face,
+                                            font_id,
+                                            self.params.pt_size,
+                                        );
+                                        let rest = Word::new(
+                                            Arc::new(rest),
+                                            &face,
+                                            font_id,
+                                            self.params.pt_size,
+                                        );
+
+                                        current_line.push(start.clone());
+                                        let new_spacing = self.justified_space_width(&current_line);
+                                        if (new_spacing - self.params.space_width).abs()
+                                            < (best_spacing - self.params.space_width).abs()
+                                        {
+                                            best_spacing = new_spacing;
+                                            best_start = Some(start);
+                                            best_rest = Some(rest);
+                                        }
+
+                                        current_line.pop();
+                                    }
+                                }
+
+                                if let Some(start) = best_start {
+                                    current_line.push(start);
+                                    self.emit_line(current_line, false);
+                                    current_line = vec![];
+                                    if let Some(rest) = best_rest {
+                                        last_word = rest;
+                                    }
+                                }
+                            }
+
                             while last_word.is_space() {
                                 last_word = match current_line.pop() {
                                     Some(w) => w,
@@ -558,12 +633,12 @@ impl<'a> LayoutBuilder<'a> {
 
                 StyleBlock::Command(change) => self.handle_style_change(change)?,
                 StyleBlock::Quote(inner) => {
-                    self.generate_word(&literals::OPEN_QUOTE)?;
+                    self.generate_word(literals::OPEN_QUOTE.clone())?;
                     self.handle_style_blocks(inner)?;
-                    self.generate_word(&literals::CLOSE_QUOTE)?;
+                    self.generate_word(literals::CLOSE_QUOTE.clone())?;
                 }
                 StyleBlock::OpenQuote(inner) => {
-                    self.generate_word(&literals::OPEN_QUOTE)?;
+                    self.generate_word(literals::OPEN_QUOTE.clone())?;
                     self.handle_style_blocks(inner)?;
                 }
             }
@@ -572,7 +647,7 @@ impl<'a> LayoutBuilder<'a> {
         Ok(())
     }
 
-    fn generate_word(&mut self, word: &'a TextUnit) -> Result<(), BurroError> {
+    fn generate_word(&mut self, word: Arc<TextUnit>) -> Result<(), BurroError> {
         let font_data = self
             .font_data
             .get(&(self.params.font_family.clone(), self.font))
@@ -589,7 +664,7 @@ impl<'a> LayoutBuilder<'a> {
             .font_id(&self.params.font_family, self.font.font_num());
 
         self.current_line
-            .push(Word::new(word, &face, font_id, self.params.pt_size));
+            .push(Word::new(word.clone(), &face, font_id, self.params.pt_size));
 
         Ok(())
     }
@@ -707,22 +782,17 @@ impl<'a> LayoutBuilder<'a> {
             // so we'll need to rework this to support other scripts.
             Alignment::Left => {
                 for word in line {
-                    match word.contents {
+                    match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
             }
             Alignment::Justify => {
-                let total_width = self.total_line_width(&line);
-                let available = self.params.page_width - self.params.margin_right - self.cursor.x;
-
-                let space_count = line.iter().filter(|w| w.is_space()).count();
-                let space_width =
-                    self.params.space_width + (available - total_width) / space_count as f64;
+                let space_width = self.justified_space_width(&line);
 
                 for word in line {
-                    match word.contents {
+                    match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => {
                             if last {
@@ -740,7 +810,7 @@ impl<'a> LayoutBuilder<'a> {
                 self.cursor.x = self.params.margin_left + available - total_width;
 
                 for word in line {
-                    match word.contents {
+                    match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
@@ -752,13 +822,22 @@ impl<'a> LayoutBuilder<'a> {
                 self.cursor.x = self.params.margin_left + (available - total_width) / 2.;
 
                 for word in line {
-                    match word.contents {
+                    match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
                         TextUnit::Space => self.cursor.x += self.params.space_width,
                     }
                 }
             }
         }
+    }
+
+    fn justified_space_width(&self, line: &[Word]) -> f64 {
+        let total_width = self.total_line_width(line);
+        let available = self.params.page_width - self.params.margin_right - self.cursor.x;
+
+        let space_count = line.iter().filter(|w| w.is_space()).count();
+
+        self.params.space_width + (available - total_width) / space_count as f64
     }
 
     fn next_page_dims(&mut self) -> (f64, f64) {

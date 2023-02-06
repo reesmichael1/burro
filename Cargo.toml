@@ -9,6 +9,7 @@ anyhow = "1.0"
 assert_float_eq = "1.1.3"
 bitflags = "1.3.2"
 gumdrop = "0.8.1"
+hyphenation = { version = "0.8.4", features = ["embed_all"] }
 lazy_static = "1.4.0"
 log = "0.4"
 regex = "1.7.1"
