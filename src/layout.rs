@@ -153,6 +153,7 @@ struct BurroParams {
     font_family: String,
     par_indent: f64,
     hyphenate: bool,
+    consecutive_hyphens: u64,
 }
 
 #[derive(Debug)]
@@ -184,8 +185,10 @@ pub struct LayoutBuilder<'a> {
     par_spaces: Vec<f64>,
     families: Vec<String>,
     fonts: Vec<Font>,
+    consecutive_hyphens: Vec<u64>,
     indent_first: bool,
     hyphenation: Standard,
+    hyphens: u64,
 }
 
 fn load_font_data<'a>(
@@ -251,6 +254,7 @@ impl<'a> LayoutBuilder<'a> {
             font_family: String::from("default"),
             par_indent: 2. * pt_size,
             hyphenate: true,
+            consecutive_hyphens: 3,
         };
 
         let font_data = load_font_data(font_map)?;
@@ -285,6 +289,8 @@ impl<'a> LayoutBuilder<'a> {
             indent_first: false,
             hyphenation: Standard::from_embedded(Language::EnglishUS)
                 .expect("hyphenation dictionary should be embedded"),
+            consecutive_hyphens: vec![],
+            hyphens: 0,
         })
     }
 
@@ -360,6 +366,10 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         self.indent_first = config.indent_first;
+
+        if let Some(hyphens) = config.consecutive_hyphens {
+            self.params.consecutive_hyphens = hyphens;
+        }
 
         if config.page_height.is_some() || config.page_width.is_some() {
             self.current_page = self.new_page();
@@ -445,6 +455,13 @@ impl<'a> LayoutBuilder<'a> {
                     }
                     Command::Font(arg) => {
                         handle_reset_val(arg, &mut self.font, &mut self.fonts)?;
+                    }
+                    Command::ConsecutiveHyphens(arg) => {
+                        handle_reset_val(
+                            arg,
+                            &mut self.params.consecutive_hyphens,
+                            &mut self.consecutive_hyphens,
+                        )?;
                     }
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
@@ -533,7 +550,9 @@ impl<'a> LayoutBuilder<'a> {
                                 .pop()
                                 .expect("still need to handle words longer than the line");
 
-                            if self.params.alignment == Alignment::Justify && self.params.hyphenate
+                            if self.params.alignment == Alignment::Justify
+                                && self.params.hyphenate
+                                && self.hyphens < self.params.consecutive_hyphens
                             {
                                 let s = last_word.str();
                                 let hyphenated = self.hyphenation.hyphenate(s);
@@ -576,13 +595,18 @@ impl<'a> LayoutBuilder<'a> {
                                 }
 
                                 if let Some(start) = best_start {
+                                    self.hyphens += 1;
                                     current_line.push(start);
                                     self.emit_line(current_line, false);
                                     current_line = vec![];
                                     if let Some(rest) = best_rest {
                                         last_word = rest;
                                     }
+                                } else {
+                                    self.hyphens = 0;
                                 }
+                            } else {
+                                self.hyphens = 0;
                             }
 
                             while last_word.is_space() {

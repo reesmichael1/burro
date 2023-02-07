@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::fonts::Font;
 use crate::lexer::Token;
+use crate::literals;
 
 #[derive(Debug, PartialEq)]
 pub enum Alignment {
@@ -33,6 +34,7 @@ pub enum Command {
     ParIndent(ResetArg<f64>),
     Family(ResetArg<String>),
     Font(ResetArg<Font>),
+    ConsecutiveHyphens(ResetArg<u64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -92,10 +94,11 @@ pub struct DocConfig {
     pub font: Option<Font>,
     pub indent_first: bool,
     pub alignment: Option<Alignment>,
+    pub consecutive_hyphens: Option<u64>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 11] = [
+const COMMAND_NAMES: [&str; 12] = [
     "align",
     "family",
     "font",
@@ -107,6 +110,7 @@ const COMMAND_NAMES: [&str; 11] = [
     "par_indent",
     "par_space",
     "space_width",
+    "consecutive_hyphens",
 ];
 
 impl DocConfig {
@@ -173,6 +177,11 @@ impl DocConfig {
         self.alignment = Some(alignment);
         self
     }
+
+    fn with_consecutive_hyphens(mut self, hyphens: u64) -> Self {
+        self.consecutive_hyphens = Some(hyphens);
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -221,6 +230,8 @@ pub enum ParseError {
     MalformedOpenQuote,
     #[error("malformed smallcaps command")]
     MalformedSmallcaps,
+    #[error("invalid command with integer argument")]
+    MalformedIntCommand,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -322,6 +333,10 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
                 ResetArg::Reset => Ok(((Node::Command(Command::Font(ResetArg::Reset))), rem)),
             }
         }
+        "consecutive_hyphens" => {
+            let (num, rem) = parse_int_command(tokens)?;
+            Ok((Node::Command(Command::ConsecutiveHyphens(num)), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -337,13 +352,13 @@ fn parse_text(
             parse_text(words, rest)
         }
         [Token::Newline, Token::Word(word), rest @ ..] => {
-            words.push(Arc::new(TextUnit::Space));
+            words.push(literals::SPACE.clone());
             words.push(Arc::new(TextUnit::Str(word.to_string())));
             parse_text(words, rest)
         }
         [Token::Space, Token::Newline, ..] => parse_text(words, &tokens[1..]),
         [Token::Space, rest @ ..] => {
-            words.push(Arc::new(TextUnit::Space));
+            words.push(literals::SPACE.clone());
             parse_text(words, rest)
         }
         _ => Ok((StyleBlock::Text(words), tokens)),
@@ -445,7 +460,7 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
         [Token::Word(word), rest @ ..] => {
             parse_text(vec![Arc::new(TextUnit::Str(word.to_string()))], rest)?
         }
-        [Token::Space, rest @ ..] => parse_text(vec![Arc::new(TextUnit::Space)], rest)?,
+        [Token::Space, rest @ ..] => parse_text(vec![literals::SPACE.clone()], rest)?,
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
             "bold" => parse_bold_command(rest)?,
             "italic" => parse_italic_command(rest)?,
@@ -563,6 +578,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         Node::Command(Command::Align(ResetArg::Explicit(alignment))) => {
                             config = config.with_alignment(alignment);
                         }
+                        Node::Command(Command::ConsecutiveHyphens(ResetArg::Explicit(hyphens))) => {
+                            config = config.with_consecutive_hyphens(hyphens);
+                        }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }
 
@@ -601,6 +619,22 @@ fn parse_unit(input: &str) -> Result<f64, ParseError> {
         }
     } else {
         Ok(num)
+    }
+}
+
+fn parse_int_command(tokens: &[Token]) -> Result<(ResetArg<u64>, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), Token::OpenSquare, Token::Word(num), Token::CloseSquare, rest @ ..] => {
+            let num = num
+                .as_str()
+                .parse::<u64>()
+                .map_err(|_| ParseError::InvalidInt(num.to_string()))?;
+            Ok((ResetArg::Explicit(num), rest))
+        }
+        [Token::Command(_), Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
+            Ok((ResetArg::Reset, rest))
+        }
+        _ => Err(ParseError::MalformedIntCommand),
     }
 }
 
@@ -665,12 +699,12 @@ mod tests {
         let mut converted = vec![];
         for (ix, word) in words.iter().enumerate() {
             if *word == " " {
-                converted.push(Arc::new(TextUnit::Space));
+                converted.push(literals::SPACE.clone());
                 continue;
             }
             converted.push(Arc::new(TextUnit::Str(word.to_string())));
             if ix != words.len() - 1 {
-                converted.push(Arc::new(TextUnit::Space));
+                converted.push(literals::SPACE.clone());
             }
         }
         StyleBlock::Text(converted)
@@ -680,11 +714,11 @@ mod tests {
         let mut converted = vec![];
         for word in words.iter() {
             if *word == " " {
-                converted.push(Arc::new(TextUnit::Space));
+                converted.push(literals::SPACE.clone());
                 continue;
             }
             converted.push(Arc::new(TextUnit::Str(word.to_string())));
-            converted.push(Arc::new(TextUnit::Space));
+            converted.push(literals::SPACE.clone());
         }
         StyleBlock::Text(converted)
     }
