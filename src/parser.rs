@@ -58,6 +58,7 @@ pub enum StyleBlock {
 pub enum StyleChange {
     PtSize(ResetArg<f64>),
     Break,
+    Spread,
     VSpace(f64),
     HSpace(ResetArg<f64>),
 }
@@ -468,6 +469,10 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
             "pt_size" => parse_point_size(rest)?,
             "break" => (
                 StyleBlock::Command(StyleChange::Break),
+                pop_spaces(&tokens[1..]),
+            ),
+            "spread" => (
+                StyleBlock::Command(StyleChange::Spread),
                 pop_spaces(&tokens[1..]),
             ),
             "vspace" => {

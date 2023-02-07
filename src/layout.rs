@@ -717,6 +717,12 @@ impl<'a> LayoutBuilder<'a> {
                 self.cursor.x = self.params.margin_left;
                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
             }
+            StyleChange::Spread => {
+                let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
+                self.emit_line(remaining_line, false);
+                self.cursor.x = self.params.margin_left;
+                self.advance_y_cursor(self.params.leading + self.params.pt_size);
+            }
             StyleChange::VSpace(space) => {
                 self.emit_remaining_line();
                 self.advance_y_cursor(*space);
