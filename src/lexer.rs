@@ -7,6 +7,7 @@ pub enum Token {
     CloseSquare,
     Newline,
     Reset,
+    NonBreakingSpace,
 }
 
 // The first version of the lexer/parser was written in OCaml,
@@ -53,6 +54,12 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
             remaining.insert(0, Token::Space);
             return remaining;
         }
+        ['~', rest @ ..] => {
+            let after_space = pop_spaces(&rest);
+            let mut remaining = lex_rest(&after_space);
+            remaining.insert(0, Token::NonBreakingSpace);
+            return remaining;
+        }
         ['.', rest @ ..] => {
             let (s, rem) = lex_string(&rest);
             let mut remaining = lex_rest(&rem);
@@ -93,7 +100,7 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
     fn accumulator(current: String, tokens: &[char]) -> (String, &[char]) {
         match tokens {
             [] => (current, &tokens),
-            [' ', ..] | ['\t', ..] => (current, &tokens),
+            [' ', ..] | ['\t', ..] | ['~', ..] => (current, &tokens),
             ['\n', ..] => (current, &tokens[..]),
             ['\r', '\n', ..] => (current, &tokens[1..]),
             ['[', ..] | [']', ..] => (current, &tokens),
@@ -275,6 +282,18 @@ c ; d
 
         let input = "--- -- - .hello[-]";
 
+        assert_eq!(expected, lex(input));
+    }
+
+    #[test]
+    fn non_breaking_space() {
+        let expected = vec![
+            Token::Word("hello".to_string()),
+            Token::NonBreakingSpace,
+            Token::Word("world~aroo".to_string()),
+        ];
+
+        let input = "hello~world\\~aroo";
         assert_eq!(expected, lex(input));
     }
 }

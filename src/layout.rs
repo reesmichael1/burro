@@ -71,7 +71,7 @@ impl From<&parser::Alignment> for Alignment {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Word {
     contents: Arc<TextUnit>,
     char_boxes: Vec<GlyphPosition>,
@@ -103,7 +103,7 @@ impl Word {
                 }
             }
 
-            TextUnit::Space => Self {
+            TextUnit::Space | TextUnit::NonBreakingSpace => Self {
                 contents: word,
                 char_boxes: vec![],
                 char_infos: vec![],
@@ -124,7 +124,7 @@ impl Word {
 
     fn is_space(&self) -> bool {
         match *self.contents {
-            TextUnit::Space => true,
+            TextUnit::Space | TextUnit::NonBreakingSpace => true,
             _ => false,
         }
     }
@@ -132,7 +132,7 @@ impl Word {
     fn str(&self) -> &str {
         match &*self.contents {
             TextUnit::Str(s) => &s,
-            TextUnit::Space => unreachable!(),
+            TextUnit::Space | TextUnit::NonBreakingSpace => unreachable!(),
         }
     }
 }
@@ -546,10 +546,23 @@ impl<'a> LayoutBuilder<'a> {
                         if self.total_line_width(&current_line)
                             > self.params.page_width - self.cursor.x - self.params.margin_right
                         {
-                            let mut last_word = current_line
+                            let mut last_words = self.pop_words(&mut current_line);
+                            if last_words.len() > 1 {
+                                // This condition means we have a non-breaking space
+                                // If we have a non-breaking space joining words,
+                                // we don't try to hyphenate within that block
+                                self.emit_line(current_line, false);
+                                current_line = last_words;
+
+                                self.cursor.x = self.params.margin_left;
+                                self.advance_y_cursor(self.params.leading + self.params.pt_size);
+                                self.hyphens = 0;
+                                continue;
+                            }
+
+                            let mut last_word = last_words
                                 .pop()
                                 .expect("still need to handle words longer than the line");
-
                             if self.params.alignment == Alignment::Justify
                                 && self.params.hyphenate
                                 && self.hyphens < self.params.consecutive_hyphens
@@ -669,6 +682,21 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         Ok(())
+    }
+
+    fn pop_words(&self, line: &mut Vec<Word>) -> Vec<Word> {
+        let mut result = vec![];
+
+        while let Some(word) = line.pop() {
+            if *word.contents != TextUnit::Space {
+                result.insert(0, word);
+            } else {
+                line.push(word);
+                break;
+            }
+        }
+
+        result
     }
 
     fn generate_word(&mut self, word: Arc<TextUnit>) -> Result<(), BurroError> {
@@ -814,7 +842,9 @@ impl<'a> LayoutBuilder<'a> {
                 for word in line {
                     match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space => self.cursor.x += self.params.space_width,
+                        TextUnit::Space | TextUnit::NonBreakingSpace => {
+                            self.cursor.x += self.params.space_width
+                        }
                     }
                 }
             }
@@ -824,7 +854,7 @@ impl<'a> LayoutBuilder<'a> {
                 for word in line {
                     match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space => {
+                        TextUnit::Space | TextUnit::NonBreakingSpace => {
                             if last {
                                 self.cursor.x += self.params.space_width;
                             } else {
@@ -842,7 +872,9 @@ impl<'a> LayoutBuilder<'a> {
                 for word in line {
                     match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space => self.cursor.x += self.params.space_width,
+                        TextUnit::Space | TextUnit::NonBreakingSpace => {
+                            self.cursor.x += self.params.space_width
+                        }
                     }
                 }
             }
@@ -854,7 +886,9 @@ impl<'a> LayoutBuilder<'a> {
                 for word in line {
                     match *word.contents {
                         TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space => self.cursor.x += self.params.space_width,
+                        TextUnit::Space | TextUnit::NonBreakingSpace => {
+                            self.cursor.x += self.params.space_width
+                        }
                     }
                 }
             }
@@ -909,13 +943,10 @@ impl<'a> LayoutBuilder<'a> {
 
         let word_width: f64 = line
             .iter()
-            .filter(|w| *w.contents != TextUnit::Space)
+            .filter(|w| !w.is_space())
             .map(|w| w.width())
             .sum();
-        let mut space_count = line
-            .iter()
-            .filter(|w| *w.contents == TextUnit::Space)
-            .count();
+        let mut space_count = line.iter().filter(|w| w.is_space()).count();
 
         if line
             .last()

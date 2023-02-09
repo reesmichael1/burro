@@ -17,7 +17,7 @@ This is a demonstration of .italic[Burro], a new typesetting language
 designed for text-heavy documents.
 
 Burro is designed to be easy to type while retaining complete control 
-over the output. It aims to be a middle ground between the limited power 
+over the output. It aims to be a middle ground between the~limited power 
 of Markdown and the heaviness of TeX and friends. Burro is directly inspired by,
 and hopes to be a spiritual successor to, groff with the mom macro set. 
 

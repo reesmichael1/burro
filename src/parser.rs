@@ -67,6 +67,7 @@ pub enum StyleChange {
 pub enum TextUnit {
     Str(String),
     Space,
+    NonBreakingSpace,
 }
 
 #[derive(Debug, PartialEq)]
@@ -462,6 +463,9 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
             parse_text(vec![Arc::new(TextUnit::Str(word.to_string()))], rest)?
         }
         [Token::Space, rest @ ..] => parse_text(vec![literals::SPACE.clone()], rest)?,
+        [Token::NonBreakingSpace, rest @ ..] => {
+            parse_text(vec![literals::NON_BREAKING_SPACE.clone()], rest)?
+        }
         [Token::Command(cmd), rest @ ..] => match cmd.as_ref() {
             "bold" => parse_bold_command(rest)?,
             "italic" => parse_italic_command(rest)?,
