@@ -11,3 +11,9 @@ smallcaps="/usr/share/fonts/OTF/Bembo/Bembo-SC.otf"
 [families.DejaVuSans]
 roman="/usr/share/fonts/TTF/DejaVuSans.ttf"
 bold="/usr/share/fonts/TTF/DejaVuSans-Bold.ttf"
+
+[families.Cardo]
+# Downloaded from http://scholarsfonts.net/cardofnt.html
+roman="/usr/share/fonts/TTF/Cardo/Cardo104s.ttf"
+bold="/usr/share/fonts/TTF/Cardo/Cardob101.ttf"
+italic="/usr/share/fonts/TTF/Cardo/Cardoi99.ttf"

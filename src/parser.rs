@@ -28,6 +28,8 @@ pub enum Command {
     // insert the break, and then continue in the next paragraph with no indent
     // (once we allow customizing the paragraph indent).
     PageBreak,
+    // TODO: rework the distinction between Commands and StyleChanges
+    // Most of these should be StyleChanges, as they'd be fine to include inline
     Leading(ResetArg<f64>),
     ParSpace(ResetArg<f64>),
     SpaceWidth(ResetArg<f64>),
@@ -35,6 +37,7 @@ pub enum Command {
     Family(ResetArg<String>),
     Font(ResetArg<Font>),
     ConsecutiveHyphens(ResetArg<u64>),
+    LetterSpace(ResetArg<f64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -97,10 +100,11 @@ pub struct DocConfig {
     pub indent_first: bool,
     pub alignment: Option<Alignment>,
     pub consecutive_hyphens: Option<u64>,
+    pub letter_space: Option<f64>,
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 12] = [
+const COMMAND_NAMES: [&str; 13] = [
     "align",
     "family",
     "font",
@@ -113,6 +117,7 @@ const COMMAND_NAMES: [&str; 12] = [
     "par_space",
     "space_width",
     "consecutive_hyphens",
+    "letter_space",
 ];
 
 impl DocConfig {
@@ -182,6 +187,11 @@ impl DocConfig {
 
     fn with_consecutive_hyphens(mut self, hyphens: u64) -> Self {
         self.consecutive_hyphens = Some(hyphens);
+        self
+    }
+
+    fn with_letter_space(mut self, letter_space: f64) -> Self {
+        self.letter_space = Some(letter_space);
         self
     }
 }
@@ -338,6 +348,10 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         "consecutive_hyphens" => {
             let (num, rem) = parse_int_command(tokens)?;
             Ok((Node::Command(Command::ConsecutiveHyphens(num)), rem))
+        }
+        "letter_space" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::LetterSpace(arg)), rem))
         }
         _ => Err(ParseError::UnknownCommand(name)),
     }
@@ -589,6 +603,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         }
                         Node::Command(Command::ConsecutiveHyphens(ResetArg::Explicit(hyphens))) => {
                             config = config.with_consecutive_hyphens(hyphens);
+                        }
+                        Node::Command(Command::LetterSpace(ResetArg::Explicit(space))) => {
+                            config = config.with_letter_space(space);
                         }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }

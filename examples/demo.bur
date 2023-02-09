@@ -2,12 +2,18 @@
 .pt_size[12]
 .page_width[8.5in]
 .page_height[11in]
+.par_space[8pt]
+.leading[3pt]
+.family[Cardo]
 .start
 .align[center]
-
+.family[default]
+.letter_space[1.5pt]
 .pt_size[18]
 .smallcaps[Burro]
 
+.family[-]
+.letter_space[-]
 .align[justify]
 ; Lines beginning with a ; are commented out (have no effect on the output)
 ; The "-" argument resets the value of this command 

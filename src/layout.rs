@@ -154,6 +154,7 @@ struct BurroParams {
     par_indent: f64,
     hyphenate: bool,
     consecutive_hyphens: u64,
+    letter_space: f64,
 }
 
 #[derive(Debug)]
@@ -189,6 +190,7 @@ pub struct LayoutBuilder<'a> {
     indent_first: bool,
     hyphenation: Standard,
     hyphens: u64,
+    letter_spaces: Vec<f64>,
 }
 
 fn load_font_data<'a>(
@@ -255,6 +257,7 @@ impl<'a> LayoutBuilder<'a> {
             par_indent: 2. * pt_size,
             hyphenate: true,
             consecutive_hyphens: 3,
+            letter_space: 0.,
         };
 
         let font_data = load_font_data(font_map)?;
@@ -291,6 +294,7 @@ impl<'a> LayoutBuilder<'a> {
                 .expect("hyphenation dictionary should be embedded"),
             consecutive_hyphens: vec![],
             hyphens: 0,
+            letter_spaces: vec![],
         })
     }
 
@@ -369,6 +373,10 @@ impl<'a> LayoutBuilder<'a> {
 
         if let Some(hyphens) = config.consecutive_hyphens {
             self.params.consecutive_hyphens = hyphens;
+        }
+
+        if let Some(space) = config.letter_space {
+            self.params.letter_space = space;
         }
 
         if config.page_height.is_some() || config.page_width.is_some() {
@@ -461,6 +469,13 @@ impl<'a> LayoutBuilder<'a> {
                             arg,
                             &mut self.params.consecutive_hyphens,
                             &mut self.consecutive_hyphens,
+                        )?;
+                    }
+                    Command::LetterSpace(arg) => {
+                        handle_reset_val(
+                            arg,
+                            &mut self.params.letter_space,
+                            &mut self.letter_spaces,
                         )?;
                     }
                 },
@@ -793,7 +808,8 @@ impl<'a> LayoutBuilder<'a> {
                 pts: word.pt_size,
             });
 
-            self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size);
+            self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size)
+                + self.params.letter_space;
             let delta_y = font_units_to_points(pos.y_advance, word.upem, word.pt_size);
             if delta_y > 0. {
                 self.advance_y_cursor(delta_y);
