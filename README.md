@@ -53,7 +53,7 @@ It is also important that the user should have easy yet complete control over wh
 
 ## Why Burro when TeX exists?
 
-TeX has been the gold standard of digital typography for the past several decades, so Burro has a high standard to reach! Burro is __not__ intended to be a toy poject but a instead a fully capable competitor to TeX--at least within its own domain. Burro intentionally restricts that domain to __text__ douments. (In other words, for your latest math homework, just use LaTeX!)
+TeX has been the gold standard of digital typography for the past several decades, so Burro has a high standard to reach! Burro is __not__ intended to be a toy poject but instead a fully capable competitor to TeX--at least within its own domain. Burro intentionally restricts that domain to __text__ documents. (In other words, for your latest math homework, just use LaTeX!)
 
 Rather than trying to find the optimal layout using its own idea of typographic beauty, Burro puts those choices in your hands. Burro looks at the current document settings: margins, page dimensions, spacing, leading, etc., and applies those to the input text, just as a typographer setting text in a printing press would do. You, as the typographer, have the freedom to change those settings at any point in the document. 
 
