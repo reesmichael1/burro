@@ -7,28 +7,34 @@ A digital typesetting language that's easy to type.
 ```
 .margins[2in]
 .pt_size[12]
+.page_width[8.5in]
+.page_height[11in]
+.par_space[8pt]
+.leading[3pt]
+.family[Cardo]
 .start
 .align[center]
-
+.family[default]
+.letter_space[1.5pt]
 .pt_size[18]
-.bold[Burro]
+.smallcaps[Burro]
 
+.family[-]
+.letter_space[-]
 .align[justify]
-; Lines beginning with a ; are commented out 
-; (i.e., they have no effect on the output)
+; Lines beginning with a ; are commented out (have no effect on the output)
 ; The "-" argument resets the value of this command 
-; to its previous value (here, 12 pts)
+; to its previous value (here, 11 pts)
 .pt_size[-]
 This is a demonstration of .italic[Burro], a new typesetting language 
 designed for text-heavy documents.
 
 Burro is designed to be easy to type while retaining complete control 
-over the output. It aims to be a middle ground between the limited power 
-of Markdown and the heaviness of TeX and friends. 
-Burro is directly inspired by, and hopes to be a spiritual successor to, 
-groff with the mom macro set. 
+over the output. It aims to be a middle ground between the~limited power 
+of Markdown and the heaviness of TeX and friends. Burro is directly inspired by,
+and hopes to be a spiritual successor to, groff with the mom macro set. 
 
-Burro does not try to guess where things should go on the page; 
+Burro does not try to guess where things should go on the~page; 
 rather, as a typographer, .italic[you] choose your layout settings 
 and Burro applies those to the text. 
 Burro aims to feel more like setting type in a printing press 

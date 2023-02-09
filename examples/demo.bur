@@ -27,8 +27,8 @@ over the output. It aims to be a middle ground between the~limited power
 of Markdown and the heaviness of TeX and friends. Burro is directly inspired by,
 and hopes to be a spiritual successor to, groff with the mom macro set. 
 
-Burro does not try to guess where things should go on the page; 
-rather, as a typographer, .italic[you] choose your layout settings 
+Burro does not try to guess where things should go on the~page; 
+rather, as a typographer, .bold[you] choose your layout settings 
 and Burro applies those to the text. 
 Burro aims to feel more like setting type in a printing press 
 than just typing into a document.
