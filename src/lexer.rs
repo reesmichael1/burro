@@ -135,14 +135,22 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
                 current.push('—');
                 return accumulator(current, rest);
             }
-
             ['-', '-', rest @ ..] => {
                 let mut current = current;
                 // This is actually an en dash, not a hyphen
                 current.push('–');
                 return accumulator(current, rest);
             }
-
+            ['`', '`', rest @ ..] => {
+                let mut current = current;
+                current.push('“');
+                return accumulator(current, rest);
+            }
+            ['\'', '\'', rest @ ..] => {
+                let mut current = current;
+                current.push('”');
+                return accumulator(current, rest);
+            }
             ['\\', ch, rest @ ..] => {
                 let mut current = current;
                 current.push(*ch);
