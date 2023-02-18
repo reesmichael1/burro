@@ -51,6 +51,34 @@ pub fn write_pdf(layout: &Layout, font_map: &FontMap, dest: &Path) -> Result<(),
 
                     current_layer.end_text_section();
                 }
+                BurroBox::Rule {
+                    start_pos,
+                    end_pos,
+                    weight,
+                } => {
+                    let points = vec![
+                        (
+                            Point::new(Pt(start_pos.x).into(), Pt(start_pos.y).into()),
+                            false,
+                        ),
+                        (
+                            Point::new(Pt(end_pos.x).into(), Pt(end_pos.y).into()),
+                            false,
+                        ),
+                    ];
+                    let rule = Line {
+                        points,
+                        is_closed: false,
+                        has_fill: false,
+                        has_stroke: true,
+                        is_clipping_path: false,
+                    };
+
+                    // Supposedly this argument is supposed to be in points?
+                    // It looks too thick to me. I think it might be doubled.
+                    current_layer.set_outline_thickness(*weight);
+                    current_layer.add_shape(rule);
+                }
             }
         }
 

@@ -8,6 +8,8 @@ pub enum Token {
     Newline,
     Reset,
     NonBreakingSpace,
+    OpenBrace,
+    CloseBrace,
 }
 
 // The first version of the lexer/parser was written in OCaml,
@@ -33,6 +35,16 @@ fn lex_rest(chars: &[char]) -> Vec<Token> {
         [']', rest @ ..] => {
             let mut remaining = lex_rest(&rest);
             remaining.insert(0, Token::CloseSquare);
+            return remaining;
+        }
+        ['{', rest @ ..] => {
+            let mut remaining = lex_rest(&rest);
+            remaining.insert(0, Token::OpenBrace);
+            return remaining;
+        }
+        ['}', rest @ ..] => {
+            let mut remaining = lex_rest(&rest);
+            remaining.insert(0, Token::CloseBrace);
             return remaining;
         }
         ['\n', ';', rest @ ..] | ['\n', '\r', ';', rest @ ..] => {
@@ -103,7 +115,7 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
             [' ', ..] | ['\t', ..] | ['~', ..] => (current, &tokens),
             ['\n', ..] => (current, &tokens[..]),
             ['\r', '\n', ..] => (current, &tokens[1..]),
-            ['[', ..] | [']', ..] => (current, &tokens),
+            ['[', ..] | [']', ..] | ['{', ..] | ['}', ..] => (current, &tokens),
             ['.', ' ', ..] => {
                 let mut current = current;
                 current.push(tokens[0]);
@@ -302,6 +314,34 @@ c ; d
         ];
 
         let input = "hello~world\\~aroo";
+        assert_eq!(expected, lex(input));
+    }
+
+    #[test]
+    fn curly_brace_syntax() {
+        let expected = vec![
+            Token::Command("hello".to_string()),
+            Token::OpenBrace,
+            Token::Newline,
+            Token::Space,
+            Token::Command("arg1".to_string()),
+            Token::OpenSquare,
+            Token::Word("val1".to_string()),
+            Token::CloseSquare,
+            Token::Newline,
+            Token::Space,
+            Token::Command("arg2".to_string()),
+            Token::OpenSquare,
+            Token::Word("val2".to_string()),
+            Token::CloseSquare,
+            Token::Newline,
+            Token::CloseBrace,
+        ];
+
+        let input = ".hello{
+    .arg1[val1]
+    .arg2[val2]
+}";
         assert_eq!(expected, lex(input));
     }
 }

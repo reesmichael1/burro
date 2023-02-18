@@ -77,12 +77,26 @@ pub enum TextUnit {
 pub enum Node {
     Command(Command),
     Paragraph(Vec<StyleBlock>),
+    Rule(RuleOptions),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct RuleOptions {
+    pub width: f64,
+    pub indent: f64,
+    pub weight: f64,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Document {
     pub nodes: Vec<Node>,
     pub config: DocConfig,
+}
+
+#[derive(Debug)]
+struct Argument {
+    name: String,
+    value: String,
 }
 
 #[derive(Default, Debug, PartialEq)]
@@ -104,20 +118,21 @@ pub struct DocConfig {
 }
 
 // These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 13] = [
+const COMMAND_NAMES: [&str; 14] = [
     "align",
+    "consecutive_hyphens",
     "family",
     "font",
     "leading",
+    "letter_space",
     "margins",
     "page_width",
     "page_height",
     "page_break",
     "par_indent",
     "par_space",
+    "rule",
     "space_width",
-    "consecutive_hyphens",
-    "letter_space",
 ];
 
 impl DocConfig {
@@ -244,6 +259,10 @@ pub enum ParseError {
     MalformedSmallcaps,
     #[error("invalid command with integer argument")]
     MalformedIntCommand,
+    #[error("malformed rule command")]
+    MalformedRule,
+    #[error("unsupported curly-brace argument")]
+    InvalidArgument,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -353,6 +372,10 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             let (arg, rem) = parse_unit_command(tokens)?;
             Ok((Node::Command(Command::LetterSpace(arg)), rem))
         }
+        "rule" => {
+            let (rule, rem) = parse_rule_command(tokens)?;
+            Ok((Node::Rule(rule), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -400,6 +423,65 @@ fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseErr
             Ok((Command::Align(ResetArg::Reset), rest))
         }
         _ => Err(ParseError::MalformedAlign),
+    }
+}
+
+fn parse_rule_command(tokens: &[Token]) -> Result<(RuleOptions, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), Token::OpenSquare, Token::Word(weight), Token::CloseSquare, rest @ ..] => {
+            Ok((
+                RuleOptions {
+                    width: 1.0,
+                    indent: 0.0,
+                    weight: parse_unit(&weight)?,
+                },
+                rest,
+            ))
+        }
+        [Token::Command(_), Token::OpenBrace, rest @ ..] => {
+            let mut next_tokens = rest;
+            let mut options = RuleOptions {
+                width: 1.0,
+                indent: 0.0,
+                weight: 0.0,
+            };
+            loop {
+                let (arg, rest) = parse_argument(next_tokens)?;
+                if let Some(arg) = arg {
+                    match arg.name.as_ref() {
+                        "width" => options.width = parse_unit(&arg.value)?,
+                        "indent" => options.indent = parse_unit(&arg.value)?,
+                        _ => return Err(ParseError::InvalidArgument),
+                    }
+                }
+                match rest {
+                    [Token::CloseBrace, Token::OpenSquare, Token::Word(weight), Token::CloseSquare, rem @ ..] =>
+                    {
+                        options.weight = parse_unit(&weight)?;
+                        return Ok((options, rem));
+                    }
+                    _ => next_tokens = rest,
+                }
+            }
+        }
+        _ => Err(ParseError::MalformedRule),
+    }
+}
+
+fn parse_argument(tokens: &[Token]) -> Result<(Option<Argument>, &[Token]), ParseError> {
+    match tokens {
+        [Token::Newline, rest @ ..] | [Token::Space, rest @ ..] => parse_argument(rest),
+        [Token::Command(com), Token::OpenSquare, Token::Word(arg), Token::CloseSquare, rest @ ..] => {
+            Ok((
+                Some(Argument {
+                    name: com.to_string(),
+                    value: arg.to_string(),
+                }),
+                rest,
+            ))
+        }
+        [Token::CloseBrace, ..] => Ok((None, tokens)),
+        _ => Err(ParseError::Unimplemented),
     }
 }
 
@@ -625,7 +707,8 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
 // (We'll add more units as needed.)
 fn parse_unit(input: &str) -> Result<f64, ParseError> {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"^(?P<num>[\d\.]+)(?P<unit>\w*)$").unwrap();
+        static ref RE: Regex = Regex::new(r"^(?P<num>[\d\.]+)(?P<unit>[\w%]*)$")
+            .expect("should have a valid regex here");
     }
     let caps = RE.captures(input).unwrap();
     let num = caps.name("num").unwrap();
@@ -641,6 +724,7 @@ fn parse_unit(input: &str) -> Result<f64, ParseError> {
             "mm" => Ok(2.83464576 * num),
             "P" => Ok(12. * num),
             "" => Ok(num),
+            "%" => Ok(num / 100.),
             _ => Err(ParseError::InvalidUnit(unit.as_str().to_string())),
         }
     } else {
@@ -995,6 +1079,12 @@ b";
     }
 
     #[test]
+    fn unit_conversion_percent() -> Result<(), ParseError> {
+        assert_f64_near!(0.5, parse_unit("50%")?);
+        Ok(())
+    }
+
+    #[test]
     fn parsing_string_arguments() -> Result<(), ParseError> {
         let input = "
 .start
@@ -1063,6 +1153,36 @@ Hello .break world";
                 StyleBlock::Command(StyleChange::Break),
                 words_to_text(&["world"]),
             ])],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn curly_brace_syntax() -> Result<(), ParseError> {
+        let input = ".start
+.rule{
+    .width[50%]
+    .indent[2P]
+}[1pt]
+
+.rule[2pt]";
+
+        let expected = Document {
+            config: DocConfig::default(),
+            nodes: vec![
+                Node::Rule(RuleOptions {
+                    width: 0.5,
+                    indent: 24.0,
+                    weight: 1.0,
+                }),
+                Node::Rule(RuleOptions {
+                    width: 1.0,
+                    indent: 0.0,
+                    weight: 2.0,
+                }),
+            ],
         };
 
         assert_eq!(expected, parse_tokens(&lex(input))?);

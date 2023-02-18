@@ -44,6 +44,11 @@ pub enum BurroBox {
         font: u32,
         pts: f64,
     },
+    Rule {
+        start_pos: Position,
+        end_pos: Position,
+        weight: f64,
+    },
 }
 
 #[derive(Debug, PartialEq)]
@@ -480,6 +485,61 @@ impl<'a> LayoutBuilder<'a> {
                     }
                 },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
+                Node::Rule(opts) => {
+                    let page_width =
+                        self.params.page_width - self.params.margin_left - self.params.margin_right;
+                    let rule_width = page_width * opts.width;
+
+                    match self.params.alignment {
+                        Alignment::Justify | Alignment::Left => {
+                            let x = opts.indent + self.params.margin_left;
+                            self.current_page.boxes.push(BurroBox::Rule {
+                                start_pos: Position {
+                                    x,
+                                    y: self.cursor.y,
+                                },
+                                end_pos: Position {
+                                    x: x + rule_width,
+                                    y: self.cursor.y,
+                                },
+                                weight: opts.weight,
+                            });
+                        }
+                        Alignment::Center => {
+                            let x = (page_width - rule_width) / 2.
+                                + opts.indent
+                                + self.params.margin_left;
+                            self.current_page.boxes.push(BurroBox::Rule {
+                                start_pos: Position {
+                                    x,
+                                    y: self.cursor.y,
+                                },
+                                end_pos: Position {
+                                    x: x + rule_width,
+                                    y: self.cursor.y,
+                                },
+                                weight: opts.weight,
+                            });
+                        }
+                        Alignment::Right => {
+                            let x = self.params.page_width
+                                - self.params.margin_right
+                                - opts.indent
+                                - rule_width;
+                            self.current_page.boxes.push(BurroBox::Rule {
+                                start_pos: Position {
+                                    x,
+                                    y: self.cursor.y,
+                                },
+                                end_pos: Position {
+                                    x: x + rule_width,
+                                    y: self.cursor.y,
+                                },
+                                weight: opts.weight,
+                            });
+                        }
+                    }
+                }
             }
         }
 
