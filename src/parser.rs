@@ -22,14 +22,7 @@ pub enum Command {
     Margins(ResetArg<f64>),
     PageWidth(ResetArg<f64>),
     PageHeight(ResetArg<f64>),
-    // There's an argument for PageBreak to be a StyleChange instead of a Command,
-    // which would allow us to insert breaks inside of paragraphs.
-    // However, a workaround is to just end the paragaph where you want the break,
-    // insert the break, and then continue in the next paragraph with no indent
-    // (once we allow customizing the paragraph indent).
     PageBreak,
-    // TODO: rework the distinction between Commands and StyleChanges
-    // Most of these should be StyleChanges, as they'd be fine to include inline
     Leading(ResetArg<f64>),
     ParSpace(ResetArg<f64>),
     SpaceWidth(ResetArg<f64>),
@@ -682,11 +675,13 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
 // (We'll add more units as needed.)
 fn parse_unit(input: &str) -> Result<f64, ParseError> {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"^(?P<num>[\d\.]+)(?P<unit>[\w%]*)$")
+        static ref RE: Regex = Regex::new(r"^(?P<num>-?[\d\.]+)(?P<unit>[\w%]*)$")
             .expect("should have a valid regex here");
     }
-    let caps = RE.captures(input).unwrap();
-    let num = caps.name("num").unwrap();
+    let caps = RE
+        .captures(input)
+        .ok_or(ParseError::InvalidUnit(input.to_string()))?;
+    let num = caps.name("num").expect("should have a matching group");
     let num = num
         .as_str()
         .parse::<f64>()
@@ -1057,6 +1052,12 @@ b";
     #[test]
     fn unit_conversion_percent() -> Result<(), ParseError> {
         assert_f64_near!(0.5, parse_unit("50%")?);
+        Ok(())
+    }
+
+    #[test]
+    fn unit_conversion_negative() -> Result<(), ParseError> {
+        assert_f64_near!(-24., parse_unit("-2P")?);
         Ok(())
     }
 
