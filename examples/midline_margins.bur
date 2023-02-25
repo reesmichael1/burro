@@ -1,0 +1,4 @@
+.start
+.pt_size[12]
+.margins[2in]
+Hello world! .margins[3in] Now the margins have been changed, so that this line will wrap weirdly. .margins[1in] However, now the margins should only be one inch wide, all the way around.

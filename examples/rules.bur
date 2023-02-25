@@ -1,28 +1,19 @@
 .start
 This is an example of a horizontal rule.
 
-; We exploit the hack of adding vspace to create empty "paragraphs"
-; Once we fix the bug with ordering commands/style blocks, 
-; (and rework the distinction between those two categories)
-; it should be much clearer how to properly 
-; add vertical spacing around rules
-
 .align[center]
 .rule{
     .width[75%]
 }[0.5pt]
 
 .align[justify]
-
-.vspace[2P]
 Below, you can see a thicker yet narrower rule.
-
+.vspace[1P]
 .rule{
     .width[50%]
     .indent[2P]
 }[1pt]
 
-.vspace[2P]
 Rules follow the alignment of their parent block.
 
 .align[center]
@@ -31,8 +22,6 @@ Rules follow the alignment of their parent block.
 }[0.5pt]
 .align[right]
 
-.vspace[0]
-
 .rule{
-    .width[95%]
+    .width[80%]
 }[1pt]

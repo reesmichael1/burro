@@ -12,11 +12,7 @@
 .pt_size[18]
 .vspace[2P]
 .smallcaps[Burro]
-
-; There's lots of hackiness here around spacing
-; Right now, the rule forms its own "paragraph" 
-; and gets the usual par_space around it
-; We need to fix this!
+.vspace[1.5P]
 .rule{
     .width[75%]
 }[0.5pt]
@@ -28,7 +24,6 @@
 ; The "-" argument resets the value of this command 
 ; to its previous value (here, 11 pts)
 .pt_size[-]
-.vspace[2P]
 This is a demonstration of .italic[Burro], a new typesetting language 
 designed for text-heavy documents.
 

@@ -10,9 +10,7 @@ use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::literals;
 use crate::parser;
-use crate::parser::{
-    Command, DocConfig, Document, Node, ResetArg, StyleBlock, StyleChange, TextUnit,
-};
+use crate::parser::{Command, DocConfig, Document, Node, ResetArg, StyleBlock, TextUnit};
 
 #[derive(Debug, PartialEq)]
 pub struct Layout {
@@ -57,7 +55,7 @@ pub struct Position {
     pub y: f64,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum Alignment {
     Left,
     Right,
@@ -390,156 +388,210 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
+    fn handle_command(&mut self, c: &Command) -> Result<(), BurroError> {
+        match c {
+            Command::Align(arg) => match arg {
+                ResetArg::Explicit(dir) => self.set_alignment(dir.into()),
+                ResetArg::Reset => {
+                    if let Some(alignment) = self.alignments.pop() {
+                        self.params.alignment = alignment;
+                    } else {
+                        return Err(BurroError::EmptyReset);
+                    }
+                }
+            },
+            Command::Margins(arg) => {
+                match arg {
+                    ResetArg::Explicit(dim) => {
+                        self.set_all_margins(*dim);
+                    }
+
+                    ResetArg::Reset => {
+                        if let Some(margins) = self.margins.pop() {
+                            self.params.margin_bottom = margins;
+                            self.params.margin_top = margins;
+                            self.params.margin_left = margins;
+                            self.params.margin_right = margins;
+                        } else {
+                            return Err(BurroError::EmptyReset);
+                        }
+                    }
+                }
+
+                // If we haven't already encountered any words,
+                // we need to move our cursor to the left margin
+                // (otherwise, it would be aligned for the old margin).
+                if self.current_line.len() == 0 {
+                    self.set_paragraph_cursor();
+                }
+            }
+            Command::PageWidth(arg) => match arg {
+                ResetArg::Explicit(dim) => {
+                    self.pending_width = Some(*dim);
+                }
+                ResetArg::Reset => {
+                    if let Some(width) = self.page_widths.pop() {
+                        self.pending_width = Some(width);
+                    } else {
+                        return Err(BurroError::EmptyReset);
+                    }
+                }
+            },
+            Command::PageHeight(arg) => match arg {
+                ResetArg::Explicit(dim) => {
+                    self.pending_height = Some(*dim);
+                }
+                ResetArg::Reset => {
+                    if let Some(height) = self.page_heights.pop() {
+                        self.pending_height = Some(height);
+                    } else {
+                        return Err(BurroError::EmptyReset);
+                    }
+                }
+            },
+
+            Command::PageBreak => {
+                self.finish_page();
+                self.set_cursor_top_left();
+            }
+            Command::Leading(arg) => {
+                handle_reset_val(arg, &mut self.params.leading, &mut self.leadings)?;
+            }
+            Command::SpaceWidth(arg) => {
+                handle_reset_val(arg, &mut self.params.space_width, &mut self.space_widths)?
+            }
+            Command::ParIndent(arg) => {
+                handle_reset_val(arg, &mut self.params.par_indent, &mut self.par_indents)?;
+            }
+            Command::ParSpace(arg) => {
+                handle_reset_val(arg, &mut self.params.par_space, &mut self.par_spaces)?;
+            }
+            Command::Family(arg) => {
+                handle_reset_val(arg, &mut self.params.font_family, &mut self.families)?;
+            }
+            Command::Font(arg) => {
+                handle_reset_val(arg, &mut self.font, &mut self.fonts)?;
+            }
+            Command::ConsecutiveHyphens(arg) => {
+                handle_reset_val(
+                    arg,
+                    &mut self.params.consecutive_hyphens,
+                    &mut self.consecutive_hyphens,
+                )?;
+            }
+            Command::LetterSpace(arg) => {
+                handle_reset_val(arg, &mut self.params.letter_space, &mut self.letter_spaces)?;
+            }
+            Command::PtSize(arg) => match arg {
+                ResetArg::Explicit(size) => {
+                    let current = std::mem::replace(&mut self.params.pt_size, *size);
+                    self.pt_sizes.push(current);
+                }
+                ResetArg::Reset => {
+                    if let Some(size) = self.pt_sizes.pop() {
+                        self.params.pt_size = size;
+                    } else {
+                        return Err(BurroError::EmptyReset);
+                    }
+                }
+            },
+            Command::Break => {
+                self.emit_remaining_line();
+                self.cursor.x = self.params.margin_left;
+                self.advance_y_cursor(self.params.leading + self.params.pt_size);
+            }
+            Command::Spread => {
+                let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
+                self.emit_line(remaining_line, false);
+                self.cursor.x = self.params.margin_left;
+                self.advance_y_cursor(self.params.leading + self.params.pt_size);
+            }
+            Command::VSpace(space) => {
+                self.emit_remaining_line();
+                self.advance_y_cursor(*space);
+            }
+            Command::HSpace(arg) => match arg {
+                ResetArg::Explicit(space) => {
+                    self.emit_remaining_line();
+                    self.cursor.x += space;
+                    if self.cursor.x >= self.params.page_width - self.params.margin_right {
+                        self.cursor.x = self.params.margin_left;
+                        self.advance_y_cursor(self.params.leading + self.params.pt_size);
+                    }
+                }
+                ResetArg::Reset => {
+                    self.emit_remaining_line();
+                    self.cursor.x = self.params.margin_left;
+                }
+            },
+
+            Command::Rule(opts) => {
+                let page_width =
+                    self.params.page_width - self.params.margin_left - self.params.margin_right;
+                let rule_width = page_width * opts.width;
+
+                match self.params.alignment {
+                    Alignment::Justify | Alignment::Left => {
+                        let x = opts.indent + self.params.margin_left;
+                        self.current_page.boxes.push(BurroBox::Rule {
+                            start_pos: Position {
+                                x,
+                                y: self.cursor.y,
+                            },
+                            end_pos: Position {
+                                x: x + rule_width,
+                                y: self.cursor.y,
+                            },
+                            weight: opts.weight,
+                        });
+                    }
+                    Alignment::Center => {
+                        let x =
+                            (page_width - rule_width) / 2. + opts.indent + self.params.margin_left;
+                        self.current_page.boxes.push(BurroBox::Rule {
+                            start_pos: Position {
+                                x,
+                                y: self.cursor.y,
+                            },
+                            end_pos: Position {
+                                x: x + rule_width,
+                                y: self.cursor.y,
+                            },
+                            weight: opts.weight,
+                        });
+                    }
+                    Alignment::Right => {
+                        let x = self.params.page_width
+                            - self.params.margin_right
+                            - opts.indent
+                            - rule_width;
+                        self.current_page.boxes.push(BurroBox::Rule {
+                            start_pos: Position {
+                                x,
+                                y: self.cursor.y,
+                            },
+                            end_pos: Position {
+                                x: x + rule_width,
+                                y: self.cursor.y,
+                            },
+                            weight: opts.weight,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
         self.apply_config(&doc.config);
 
         for node in &doc.nodes {
             match node {
-                Node::Command(c) => match c {
-                    Command::Align(arg) => match arg {
-                        ResetArg::Explicit(dir) => self.set_alignment(dir.into()),
-                        ResetArg::Reset => {
-                            if let Some(alignment) = self.alignments.pop() {
-                                self.params.alignment = alignment;
-                            } else {
-                                return Err(BurroError::EmptyReset);
-                            }
-                        }
-                    },
-                    Command::Margins(arg) => match arg {
-                        ResetArg::Explicit(dim) => {
-                            self.set_all_margins(*dim);
-                        }
+                Node::Command(c) => self.handle_command(c)?,
 
-                        ResetArg::Reset => {
-                            if let Some(margins) = self.margins.pop() {
-                                self.params.margin_bottom = margins;
-                                self.params.margin_top = margins;
-                                self.params.margin_left = margins;
-                                self.params.margin_right = margins;
-                            } else {
-                                return Err(BurroError::EmptyReset);
-                            }
-                        }
-                    },
-                    Command::PageWidth(arg) => match arg {
-                        ResetArg::Explicit(dim) => {
-                            self.pending_width = Some(*dim);
-                        }
-                        ResetArg::Reset => {
-                            if let Some(width) = self.page_widths.pop() {
-                                self.pending_width = Some(width);
-                            } else {
-                                return Err(BurroError::EmptyReset);
-                            }
-                        }
-                    },
-                    Command::PageHeight(arg) => match arg {
-                        ResetArg::Explicit(dim) => {
-                            self.pending_height = Some(*dim);
-                        }
-                        ResetArg::Reset => {
-                            if let Some(height) = self.page_heights.pop() {
-                                self.pending_height = Some(height);
-                            } else {
-                                return Err(BurroError::EmptyReset);
-                            }
-                        }
-                    },
-
-                    Command::PageBreak => {
-                        self.finish_page();
-                        self.set_cursor_top_left();
-                    }
-                    Command::Leading(arg) => {
-                        handle_reset_val(arg, &mut self.params.leading, &mut self.leadings)?;
-                    }
-                    Command::SpaceWidth(arg) => {
-                        handle_reset_val(arg, &mut self.params.space_width, &mut self.space_widths)?
-                    }
-                    Command::ParIndent(arg) => {
-                        handle_reset_val(arg, &mut self.params.par_indent, &mut self.par_indents)?;
-                    }
-                    Command::ParSpace(arg) => {
-                        handle_reset_val(arg, &mut self.params.par_space, &mut self.par_spaces)?;
-                    }
-                    Command::Family(arg) => {
-                        handle_reset_val(arg, &mut self.params.font_family, &mut self.families)?;
-                    }
-                    Command::Font(arg) => {
-                        handle_reset_val(arg, &mut self.font, &mut self.fonts)?;
-                    }
-                    Command::ConsecutiveHyphens(arg) => {
-                        handle_reset_val(
-                            arg,
-                            &mut self.params.consecutive_hyphens,
-                            &mut self.consecutive_hyphens,
-                        )?;
-                    }
-                    Command::LetterSpace(arg) => {
-                        handle_reset_val(
-                            arg,
-                            &mut self.params.letter_space,
-                            &mut self.letter_spaces,
-                        )?;
-                    }
-                },
                 Node::Paragraph(p) => self.handle_paragraph(p)?,
-                Node::Rule(opts) => {
-                    let page_width =
-                        self.params.page_width - self.params.margin_left - self.params.margin_right;
-                    let rule_width = page_width * opts.width;
-
-                    match self.params.alignment {
-                        Alignment::Justify | Alignment::Left => {
-                            let x = opts.indent + self.params.margin_left;
-                            self.current_page.boxes.push(BurroBox::Rule {
-                                start_pos: Position {
-                                    x,
-                                    y: self.cursor.y,
-                                },
-                                end_pos: Position {
-                                    x: x + rule_width,
-                                    y: self.cursor.y,
-                                },
-                                weight: opts.weight,
-                            });
-                        }
-                        Alignment::Center => {
-                            let x = (page_width - rule_width) / 2.
-                                + opts.indent
-                                + self.params.margin_left;
-                            self.current_page.boxes.push(BurroBox::Rule {
-                                start_pos: Position {
-                                    x,
-                                    y: self.cursor.y,
-                                },
-                                end_pos: Position {
-                                    x: x + rule_width,
-                                    y: self.cursor.y,
-                                },
-                                weight: opts.weight,
-                            });
-                        }
-                        Alignment::Right => {
-                            let x = self.params.page_width
-                                - self.params.margin_right
-                                - opts.indent
-                                - rule_width;
-                            self.current_page.boxes.push(BurroBox::Rule {
-                                start_pos: Position {
-                                    x,
-                                    y: self.cursor.y,
-                                },
-                                end_pos: Position {
-                                    x: x + rule_width,
-                                    y: self.cursor.y,
-                                },
-                                weight: opts.weight,
-                            });
-                        }
-                    }
-                }
             }
         }
 
@@ -562,12 +614,16 @@ impl<'a> LayoutBuilder<'a> {
         self.pages.push(last_page);
     }
 
-    fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) -> Result<(), BurroError> {
+    fn set_paragraph_cursor(&mut self) {
         if self.par_counter == 0 && !self.indent_first {
             self.cursor.x = self.params.margin_left;
         } else {
             self.cursor.x = self.params.margin_left + self.params.par_indent;
         }
+    }
+
+    fn handle_paragraph(&mut self, paragraph: &'a [StyleBlock]) -> Result<(), BurroError> {
+        self.set_paragraph_cursor();
 
         self.handle_style_blocks(paragraph)?;
         self.finish_paragraph();
@@ -743,7 +799,7 @@ impl<'a> LayoutBuilder<'a> {
                     }
                 }
 
-                StyleBlock::Command(change) => self.handle_style_change(change)?,
+                StyleBlock::Comm(comm) => self.handle_command(comm)?,
                 StyleBlock::Quote(inner) => {
                     self.generate_word(literals::OPEN_QUOTE.clone())?;
                     self.handle_style_blocks(inner)?;
@@ -792,59 +848,6 @@ impl<'a> LayoutBuilder<'a> {
 
         self.current_line
             .push(Word::new(word.clone(), &face, font_id, self.params.pt_size));
-
-        Ok(())
-    }
-
-    fn handle_style_change(&mut self, change: &StyleChange) -> Result<(), BurroError> {
-        match change {
-            // To decide: do we want to automatically change the leading,
-            // or ask the user to change it themselves?
-            // Perhaps if the leading has been explicitly set, then leave it alone,
-            // and otherwise change it automatically?
-            StyleChange::PtSize(arg) => match arg {
-                ResetArg::Explicit(size) => {
-                    let current = std::mem::replace(&mut self.params.pt_size, *size);
-                    self.pt_sizes.push(current);
-                }
-                ResetArg::Reset => {
-                    if let Some(size) = self.pt_sizes.pop() {
-                        self.params.pt_size = size;
-                    } else {
-                        return Err(BurroError::EmptyReset);
-                    }
-                }
-            },
-            StyleChange::Break => {
-                self.emit_remaining_line();
-                self.cursor.x = self.params.margin_left;
-                self.advance_y_cursor(self.params.leading + self.params.pt_size);
-            }
-            StyleChange::Spread => {
-                let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
-                self.emit_line(remaining_line, false);
-                self.cursor.x = self.params.margin_left;
-                self.advance_y_cursor(self.params.leading + self.params.pt_size);
-            }
-            StyleChange::VSpace(space) => {
-                self.emit_remaining_line();
-                self.advance_y_cursor(*space);
-            }
-            StyleChange::HSpace(arg) => match arg {
-                ResetArg::Explicit(space) => {
-                    self.emit_remaining_line();
-                    self.cursor.x += space;
-                    if self.cursor.x >= self.params.page_width - self.params.margin_right {
-                        self.cursor.x = self.params.margin_left;
-                        self.advance_y_cursor(self.params.leading + self.params.pt_size);
-                    }
-                }
-                ResetArg::Reset => {
-                    self.emit_remaining_line();
-                    self.cursor.x = self.params.margin_left;
-                }
-            },
-        }
 
         Ok(())
     }

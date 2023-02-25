@@ -38,6 +38,12 @@ pub enum Command {
     Font(ResetArg<Font>),
     ConsecutiveHyphens(ResetArg<u64>),
     LetterSpace(ResetArg<f64>),
+    PtSize(ResetArg<f64>),
+    Break,
+    Spread,
+    VSpace(f64),
+    HSpace(ResetArg<f64>),
+    Rule(RuleOptions),
 }
 
 #[derive(Debug, PartialEq)]
@@ -51,19 +57,10 @@ pub enum StyleBlock {
     Bold(Vec<StyleBlock>),
     Italic(Vec<StyleBlock>),
     Smallcaps(Vec<StyleBlock>),
-    Command(StyleChange),
+    Comm(Command),
     Text(Vec<Arc<TextUnit>>),
     Quote(Vec<StyleBlock>),
     OpenQuote(Vec<StyleBlock>),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum StyleChange {
-    PtSize(ResetArg<f64>),
-    Break,
-    Spread,
-    VSpace(f64),
-    HSpace(ResetArg<f64>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -77,7 +74,6 @@ pub enum TextUnit {
 pub enum Node {
     Command(Command),
     Paragraph(Vec<StyleBlock>),
-    Rule(RuleOptions),
 }
 
 #[derive(Debug, PartialEq)]
@@ -116,24 +112,6 @@ pub struct DocConfig {
     pub consecutive_hyphens: Option<u64>,
     pub letter_space: Option<f64>,
 }
-
-// These are true "commands," i.e., they should not happen inside of a paragraph.
-const COMMAND_NAMES: [&str; 14] = [
-    "align",
-    "consecutive_hyphens",
-    "family",
-    "font",
-    "leading",
-    "letter_space",
-    "margins",
-    "page_width",
-    "page_height",
-    "page_break",
-    "par_indent",
-    "par_space",
-    "rule",
-    "space_width",
-];
 
 impl DocConfig {
     fn build() -> Self {
@@ -281,16 +259,7 @@ fn parse_node_list(tokens: &[Token]) -> Result<(Vec<Node>, &[Token]), ParseError
     }
 
     match tokens {
-        [Token::Command(name), ..] => {
-            if COMMAND_NAMES.contains(&name.as_ref()) {
-                let (cmd, remaining) = parse_command(name.to_string(), tokens)?;
-                let (mut nodes, last) = parse_node_list(remaining)?;
-                nodes.insert(0, cmd);
-                Ok((nodes, last))
-            } else {
-                get_paragraph(tokens)
-            }
-        }
+        [Token::Command(_), ..] => get_paragraph(tokens),
         [Token::Newline, Token::Newline, rest @ ..] => parse_node_list(rest),
         [Token::Newline, rest @ ..] => parse_node_list(rest),
         [] => Ok((vec![], &[])),
@@ -374,7 +343,30 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         }
         "rule" => {
             let (rule, rem) = parse_rule_command(tokens)?;
-            Ok((Node::Rule(rule), rem))
+            Ok((Node::Command(Command::Rule(rule)), rem))
+        }
+
+        "pt_size" => {
+            if let (StyleBlock::Comm(pt_size), rem) = parse_point_size(&tokens[1..])? {
+                Ok((Node::Command(pt_size), rem))
+            } else {
+                unreachable!()
+            }
+        }
+        "break" => Ok((Node::Command(Command::Break), pop_spaces(&tokens[1..]))),
+        "spread" => Ok((Node::Command(Command::Spread), pop_spaces(&tokens[1..]))),
+        "vspace" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            match arg {
+                ResetArg::Explicit(dim) => {
+                    Ok((Node::Command(Command::VSpace(dim)), pop_spaces(rem)))
+                }
+                ResetArg::Reset => return Err(ParseError::InvalidReset),
+            }
+        }
+        "hspace" => {
+            let (arg, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::HSpace(arg)), pop_spaces(rem)))
         }
         _ => Err(ParseError::UnknownCommand(name)),
     }
@@ -405,12 +397,15 @@ fn parse_text(
 }
 
 fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseError> {
-    match tokens {
-        [Token::Command(name), Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] =>
-        {
-            if name != "align" {
-                return Err(ParseError::MalformedAlign);
-            }
+    if let Token::Command(name) = &tokens[0] {
+        if name != "align" {
+            return Err(ParseError::MalformedAlign);
+        }
+    } else {
+        return Err(ParseError::MalformedAlign);
+    }
+    match &tokens[1..] {
+        [Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] => {
             match align.as_ref() {
                 "left" => Ok((Command::Align(ResetArg::Explicit(Alignment::Left)), rest)),
                 "right" => Ok((Command::Align(ResetArg::Explicit(Alignment::Right)), rest)),
@@ -523,12 +518,12 @@ fn parse_point_size(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseErr
                 .map_err(|_| ParseError::MalformedPtSize)?;
 
             Ok((
-                StyleBlock::Command(StyleChange::PtSize(ResetArg::Explicit(size))),
+                StyleBlock::Comm(Command::PtSize(ResetArg::Explicit(size))),
                 pop_spaces(rest),
             ))
         }
         [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => Ok((
-            StyleBlock::Command(StyleChange::PtSize(ResetArg::Reset)),
+            StyleBlock::Comm(Command::PtSize(ResetArg::Reset)),
             pop_spaces(rest),
         )),
         _ => Err(ParseError::MalformedPtSize),
@@ -566,32 +561,6 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
             "bold" => parse_bold_command(rest)?,
             "italic" => parse_italic_command(rest)?,
             "smallcaps" => parse_smallcaps_command(rest)?,
-            "pt_size" => parse_point_size(rest)?,
-            "break" => (
-                StyleBlock::Command(StyleChange::Break),
-                pop_spaces(&tokens[1..]),
-            ),
-            "spread" => (
-                StyleBlock::Command(StyleChange::Spread),
-                pop_spaces(&tokens[1..]),
-            ),
-            "vspace" => {
-                let (arg, rem) = parse_unit_command(&tokens)?;
-                match arg {
-                    ResetArg::Explicit(dim) => (
-                        StyleBlock::Command(StyleChange::VSpace(dim)),
-                        pop_spaces(rem),
-                    ),
-                    ResetArg::Reset => return Err(ParseError::InvalidReset),
-                }
-            }
-            "hspace" => {
-                let (arg, rem) = parse_unit_command(&tokens)?;
-                (
-                    StyleBlock::Command(StyleChange::HSpace(arg)),
-                    pop_spaces(rem),
-                )
-            }
             "quote" => match tokens {
                 [Token::Command(_), Token::OpenSquare, rest @ ..] => {
                     let (inner, rem) = parse_style_block_list(rest)?;
@@ -606,7 +575,13 @@ fn parse_style_block(tokens: &[Token]) -> Result<(Option<StyleBlock>, &[Token]),
                 }
                 _ => return Err(ParseError::MalformedQuote),
             },
-            _ => Err(ParseError::UnknownCommand(cmd.to_string()))?,
+            _ => {
+                if let (Node::Command(comm), rem) = parse_command(cmd.to_string(), tokens)? {
+                    (StyleBlock::Comm(comm), rem)
+                } else {
+                    unreachable!()
+                }
+            }
         },
         [Token::Newline, rest @ ..] => {
             if let (Some(block), rem) = parse_style_block(rest)? {
@@ -632,7 +607,7 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                 "pt_size" => {
                     let (com, rem) = parse_point_size(&tokens[1..])?;
                     match com {
-                        StyleBlock::Command(StyleChange::PtSize(arg)) => match arg {
+                        StyleBlock::Comm(Command::PtSize(arg)) => match arg {
                             ResetArg::Explicit(size) => {
                                 config = config.with_pt_size(size as f64);
                             }
@@ -841,16 +816,15 @@ mod tests {
     fn basic_parsing() -> Result<(), ParseError> {
         let expected = Document {
             config: DocConfig::build(),
-            nodes: vec![
-                Node::Command(Command::Align(explicit(Alignment::Center))),
-                Node::Paragraph(vec![words_to_text(&["This", "is", "a", "text", "node."])]),
-            ],
+            nodes: vec![Node::Paragraph(vec![
+                StyleBlock::Comm(Command::Align(explicit(Alignment::Center))),
+                words_to_text(&["This", "is", "a", "text", "node."]),
+            ])],
         };
 
         let input = ".start
 
 .align[center]
-
 This is a text node.";
         let doc = parse_tokens(&lex(input))?;
         assert_eq!(expected, doc);
@@ -932,7 +906,7 @@ a .pt_size[14] b";
             config: DocConfig::build(),
             nodes: vec![Node::Paragraph(vec![
                 words_to_text_sp(&["a"]),
-                StyleBlock::Command(StyleChange::PtSize(explicit(14.))),
+                StyleBlock::Comm(Command::PtSize(explicit(14.))),
                 words_to_text(&["b"]),
             ])],
         };
@@ -956,7 +930,7 @@ b";
             nodes: vec![
                 Node::Paragraph(vec![words_to_text(&["a"])]),
                 Node::Paragraph(vec![
-                    StyleBlock::Command(StyleChange::PtSize(explicit(14.))),
+                    StyleBlock::Comm(Command::PtSize(explicit(14.))),
                     words_to_text(&["b"]),
                 ]),
             ],
@@ -1038,8 +1012,10 @@ b";
             config: DocConfig::default(),
             nodes: vec![
                 Node::Paragraph(vec![words_to_text(&["a"])]),
-                Node::Command(Command::Margins(explicit(144.))),
-                Node::Paragraph(vec![words_to_text(&["b"])]),
+                Node::Paragraph(vec![
+                    StyleBlock::Comm(Command::Margins(explicit(144.))),
+                    words_to_text(&["b"]),
+                ]),
             ],
         };
 
@@ -1093,10 +1069,10 @@ b";
 
         let expected = Document {
             config: DocConfig::default(),
-            nodes: vec![
-                Node::Command(Command::Family(explicit("TimesNew".into()))),
-                Node::Command(Command::Font(explicit("Roman".into()))),
-            ],
+            nodes: vec![Node::Paragraph(vec![
+                StyleBlock::Comm(Command::Family(explicit("TimesNew".into()))),
+                StyleBlock::Comm(Command::Font(explicit("Roman".into()))),
+            ])],
         };
 
         assert_eq!(expected, parse_tokens(&lex(input))?);
@@ -1150,7 +1126,7 @@ Hello .break world";
             config: DocConfig::default(),
             nodes: vec![Node::Paragraph(vec![
                 words_to_text_sp(&["Hello"]),
-                StyleBlock::Command(StyleChange::Break),
+                StyleBlock::Comm(Command::Break),
                 words_to_text(&["world"]),
             ])],
         };
@@ -1172,16 +1148,16 @@ Hello .break world";
         let expected = Document {
             config: DocConfig::default(),
             nodes: vec![
-                Node::Rule(RuleOptions {
+                Node::Paragraph(vec![StyleBlock::Comm(Command::Rule(RuleOptions {
                     width: 0.5,
                     indent: 24.0,
                     weight: 1.0,
-                }),
-                Node::Rule(RuleOptions {
+                }))]),
+                Node::Paragraph(vec![StyleBlock::Comm(Command::Rule(RuleOptions {
                     width: 1.0,
                     indent: 0.0,
                     weight: 2.0,
-                }),
+                }))]),
             ],
         };
 
