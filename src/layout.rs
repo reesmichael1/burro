@@ -11,6 +11,7 @@ use crate::fonts::Font;
 use crate::literals;
 use crate::parser;
 use crate::parser::{Command, DocConfig, Document, Node, ResetArg, StyleBlock, TextUnit};
+use crate::util::OrdFloat;
 
 #[derive(Debug, PartialEq)]
 pub struct Layout {
@@ -144,13 +145,16 @@ impl Word {
 struct BurroParams {
     margin_top: f64,
     margin_bottom: f64,
-    margin_left: f64,
-    margin_right: f64,
+    page_margin_left: f64,
+    page_margin_right: f64,
+    col_margin_left: f64,
+    col_margin_right: f64,
     alignment: Alignment,
     leading: f64,
     pt_size: f64,
     page_width: f64,
     space_width: f64,
+    min_space_width: f64,
     page_height: f64,
     par_space: f64,
     font_family: String,
@@ -194,6 +198,12 @@ pub struct LayoutBuilder<'a> {
     hyphenation: Standard,
     hyphens: u64,
     letter_spaces: Vec<f64>,
+    current_col: u32,
+    column_count: u32,
+    column_width: f64,
+    column_gutter: f64,
+    column_top: f64,
+    column_bottom: f64,
 }
 
 fn load_font_data<'a>(
@@ -246,8 +256,10 @@ impl<'a> LayoutBuilder<'a> {
         let pt_size = 12.0;
         let params = BurroParams {
             margin_top: inch,
-            margin_left: inch,
-            margin_right: inch,
+            page_margin_left: inch,
+            page_margin_right: inch,
+            col_margin_left: inch,
+            col_margin_right: inch,
             margin_bottom: inch,
             pt_size,
             par_space: 1.25 * pt_size,
@@ -256,6 +268,7 @@ impl<'a> LayoutBuilder<'a> {
             page_width: inch * 8.5,
             page_height: inch * 11.0,
             space_width: pt_size / 4.,
+            min_space_width: pt_size / 8.,
             font_family: String::from("default"),
             par_indent: 2. * pt_size,
             hyphenate: true,
@@ -265,15 +278,15 @@ impl<'a> LayoutBuilder<'a> {
 
         let font_data = load_font_data(font_map)?;
 
+        // Initialize the cursor at the document's top left corner.
+        let cursor = Point2D {
+            x: params.page_margin_left,
+            y: params.page_height - (params.margin_top + params.pt_size + params.leading),
+        };
+
         Ok(Self {
-            // Initialize the cursor at the document's top left corner.
-            cursor: Point2D {
-                x: params.margin_left,
-                y: params.page_height - (params.margin_top + params.pt_size + params.leading),
-            },
             current_page: Page::new(params.page_width, params.page_height),
             pages: vec![],
-            params,
             font: Font::ROMAN,
             font_data,
             font_map,
@@ -298,6 +311,14 @@ impl<'a> LayoutBuilder<'a> {
             consecutive_hyphens: vec![],
             hyphens: 0,
             letter_spaces: vec![],
+            current_col: 0,
+            column_count: 1,
+            column_width: params.page_width - params.page_margin_left - params.page_margin_right,
+            column_gutter: 0.,
+            column_top: cursor.y,
+            column_bottom: cursor.y,
+            params,
+            cursor,
         })
     }
 
@@ -312,12 +333,22 @@ impl<'a> LayoutBuilder<'a> {
         let previous = std::mem::replace(&mut self.params.margin_bottom, value);
         self.margins.push(previous);
         self.params.margin_top = value;
-        self.params.margin_left = value;
-        self.params.margin_right = value;
+        self.params.page_margin_left = value;
+        self.params.page_margin_right = value;
+
+        self.column_width =
+            self.params.page_width - self.params.page_margin_left - self.params.page_margin_right;
+        self.params.col_margin_left = value;
+        self.params.col_margin_right = value;
+        // TODO: what to do when margins change mid-column?
+        // Besides running away screaming....
+        if self.column_count > 1 {
+            todo!();
+        }
     }
 
     fn set_cursor_top_left(&mut self) {
-        self.cursor.x = self.params.margin_left;
+        self.cursor.x = self.params.page_margin_left;
         self.cursor.y = self.params.page_height
             - (self.params.margin_top + self.params.pt_size + self.params.leading);
     }
@@ -326,14 +357,24 @@ impl<'a> LayoutBuilder<'a> {
         if let Some(margin) = config.margins {
             self.params.margin_bottom = margin;
             self.params.margin_top = margin;
-            self.params.margin_left = margin;
-            self.params.margin_right = margin;
+            self.params.page_margin_left = margin;
+            self.params.page_margin_right = margin;
+
+            self.column_width = self.params.page_width
+                - self.params.page_margin_left
+                - self.params.page_margin_right;
+            self.params.col_margin_left = margin;
+            self.params.col_margin_right = margin;
 
             self.set_cursor_top_left();
         }
 
         if let Some(size) = config.pt_size {
             self.params.pt_size = size;
+            // TODO: check if the width has been explicitly set,
+            // and don't override if so.
+            self.params.space_width = size / 4.;
+            self.params.min_space_width = size / 8.;
         }
 
         if let Some(width) = config.page_width {
@@ -388,7 +429,7 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
-    fn handle_command(&mut self, c: &Command) -> Result<(), BurroError> {
+    fn handle_command(&mut self, c: &'a Command) -> Result<(), BurroError> {
         match c {
             Command::Align(arg) => match arg {
                 ResetArg::Explicit(dir) => self.set_alignment(dir.into()),
@@ -410,8 +451,14 @@ impl<'a> LayoutBuilder<'a> {
                         if let Some(margins) = self.margins.pop() {
                             self.params.margin_bottom = margins;
                             self.params.margin_top = margins;
-                            self.params.margin_left = margins;
-                            self.params.margin_right = margins;
+                            self.params.page_margin_left = margins;
+                            self.params.page_margin_right = margins;
+
+                            self.column_width = self.params.page_width
+                                - self.params.page_margin_left
+                                - self.params.page_margin_right;
+                            self.params.col_margin_left = margins;
+                            self.params.col_margin_right = margins;
                         } else {
                             return Err(BurroError::EmptyReset);
                         }
@@ -485,11 +532,19 @@ impl<'a> LayoutBuilder<'a> {
             Command::PtSize(arg) => match arg {
                 ResetArg::Explicit(size) => {
                     let current = std::mem::replace(&mut self.params.pt_size, *size);
+                    // TODO: check if the width has been explicitly set,
+                    // and don't override if so.
+                    self.params.space_width = size / 4.;
+                    self.params.min_space_width = size / 8.;
                     self.pt_sizes.push(current);
                 }
                 ResetArg::Reset => {
                     if let Some(size) = self.pt_sizes.pop() {
                         self.params.pt_size = size;
+                        // TODO: check if the width has been explicitly set,
+                        // and don't override if so.
+                        self.params.space_width = size / 4.;
+                        self.params.min_space_width = size / 8.;
                     } else {
                         return Err(BurroError::EmptyReset);
                     }
@@ -497,13 +552,13 @@ impl<'a> LayoutBuilder<'a> {
             },
             Command::Break => {
                 self.emit_remaining_line();
-                self.cursor.x = self.params.margin_left;
+                self.cursor.x = self.params.page_margin_left;
                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
             }
             Command::Spread => {
                 let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
                 self.emit_line(remaining_line, false);
-                self.cursor.x = self.params.margin_left;
+                self.cursor.x = self.params.page_margin_left;
                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
             }
             Command::VSpace(space) => {
@@ -514,25 +569,23 @@ impl<'a> LayoutBuilder<'a> {
                 ResetArg::Explicit(space) => {
                     self.emit_remaining_line();
                     self.cursor.x += space;
-                    if self.cursor.x >= self.params.page_width - self.params.margin_right {
-                        self.cursor.x = self.params.margin_left;
+                    if self.cursor.x >= self.params.col_margin_left + self.column_width {
+                        self.cursor.x = self.params.page_margin_left;
                         self.advance_y_cursor(self.params.leading + self.params.pt_size);
                     }
                 }
                 ResetArg::Reset => {
                     self.emit_remaining_line();
-                    self.cursor.x = self.params.margin_left;
+                    self.cursor.x = self.params.page_margin_left;
                 }
             },
 
             Command::Rule(opts) => {
-                let page_width =
-                    self.params.page_width - self.params.margin_left - self.params.margin_right;
-                let rule_width = page_width * opts.width;
+                let rule_width = self.column_width * opts.width;
 
                 match self.params.alignment {
                     Alignment::Justify | Alignment::Left => {
-                        let x = opts.indent + self.params.margin_left;
+                        let x = opts.indent + self.params.page_margin_left;
                         self.current_page.boxes.push(BurroBox::Rule {
                             start_pos: Position {
                                 x,
@@ -546,8 +599,9 @@ impl<'a> LayoutBuilder<'a> {
                         });
                     }
                     Alignment::Center => {
-                        let x =
-                            (page_width - rule_width) / 2. + opts.indent + self.params.margin_left;
+                        let x = (self.column_width - rule_width) / 2.
+                            + opts.indent
+                            + self.params.page_margin_left;
                         self.current_page.boxes.push(BurroBox::Rule {
                             start_pos: Position {
                                 x,
@@ -561,8 +615,7 @@ impl<'a> LayoutBuilder<'a> {
                         });
                     }
                     Alignment::Right => {
-                        let x = self.params.page_width
-                            - self.params.margin_right
+                        let x = self.params.col_margin_left + self.column_width
                             - opts.indent
                             - rule_width;
                         self.current_page.boxes.push(BurroBox::Rule {
@@ -577,6 +630,39 @@ impl<'a> LayoutBuilder<'a> {
                             weight: opts.weight,
                         });
                     }
+                }
+            }
+            Command::Columns(opts) => {
+                // Only change the column layout if the new columns are different
+                // than the old columns.
+                if opts.count != self.column_count {
+                    let available_width = self.params.page_width
+                        - self.params.page_margin_left
+                        - self.params.page_margin_right;
+                    let total_gutter = opts.gutter * (opts.count - 1) as f64;
+                    let col_width = (available_width - total_gutter) / opts.count as f64;
+
+                    self.params.col_margin_left = self.params.page_margin_left;
+                    self.params.col_margin_right = self.params.page_margin_left;
+
+                    self.cursor.x = self.params.col_margin_left;
+                    self.column_top = self.cursor.y;
+
+                    // If the column_bottom (lowest column value reached so far)
+                    // is lower than the cursor, bring the cursor down
+                    // and advance it for the next line.
+                    self.cursor.y = self.cursor.y.min(self.column_bottom);
+                    if self.cursor.y - self.params.margin_bottom
+                        < self.params.leading + self.params.pt_size + self.params.par_space
+                    {
+                        self.advance_y_cursor(
+                            self.params.leading + self.params.pt_size + self.params.par_space,
+                        );
+                    }
+                    self.column_width = col_width;
+                    self.column_gutter = opts.gutter;
+                    self.column_count = opts.count;
+                    self.current_col = 1;
                 }
             }
         }
@@ -616,9 +702,9 @@ impl<'a> LayoutBuilder<'a> {
 
     fn set_paragraph_cursor(&mut self) {
         if self.par_counter == 0 && !self.indent_first {
-            self.cursor.x = self.params.margin_left;
+            self.cursor.x = self.params.col_margin_left;
         } else {
-            self.cursor.x = self.params.margin_left + self.params.par_indent;
+            self.cursor.x = self.params.col_margin_left + self.params.par_indent;
         }
     }
 
@@ -627,7 +713,7 @@ impl<'a> LayoutBuilder<'a> {
 
         self.handle_style_blocks(paragraph)?;
         self.finish_paragraph();
-        self.cursor.x = self.params.margin_left;
+        self.cursor.x = self.params.col_margin_left;
 
         self.advance_y_cursor(self.params.leading + self.params.pt_size + self.params.par_space);
 
@@ -674,8 +760,10 @@ impl<'a> LayoutBuilder<'a> {
                             font_id,
                             self.params.pt_size,
                         ));
+
                         if self.total_line_width(&current_line)
-                            > self.params.page_width - self.cursor.x - self.params.margin_right
+                            + (self.cursor.x - self.params.col_margin_left)
+                            > self.column_width
                         {
                             let mut last_words = self.pop_words(&mut current_line);
                             if last_words.len() > 1 {
@@ -685,7 +773,7 @@ impl<'a> LayoutBuilder<'a> {
                                 self.emit_line(current_line, false);
                                 current_line = last_words;
 
-                                self.cursor.x = self.params.margin_left;
+                                self.cursor.x = self.params.col_margin_left;
                                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
                                 self.hyphens = 0;
                                 continue;
@@ -694,6 +782,7 @@ impl<'a> LayoutBuilder<'a> {
                             let mut last_word = last_words
                                 .pop()
                                 .expect("still need to handle words longer than the line");
+
                             if self.params.alignment == Alignment::Justify
                                 && self.params.hyphenate
                                 && self.hyphens < self.params.consecutive_hyphens
@@ -728,6 +817,7 @@ impl<'a> LayoutBuilder<'a> {
                                         let new_spacing = self.justified_space_width(&current_line);
                                         if (new_spacing - self.params.space_width).abs()
                                             < (best_spacing - self.params.space_width).abs()
+                                            && new_spacing >= self.params.min_space_width
                                         {
                                             best_spacing = new_spacing;
                                             best_start = Some(start);
@@ -762,7 +852,7 @@ impl<'a> LayoutBuilder<'a> {
 
                             self.emit_line(current_line, false);
 
-                            self.cursor.x = self.params.margin_left;
+                            self.cursor.x = self.params.col_margin_left;
                             self.advance_y_cursor(self.params.leading + self.params.pt_size);
 
                             current_line = vec![last_word];
@@ -905,7 +995,7 @@ impl<'a> LayoutBuilder<'a> {
             .pt_size;
         let max_size = line
             .iter()
-            .map(|w| crate::util::OrdFloat { val: w.pt_size })
+            .map(|w| OrdFloat { val: w.pt_size })
             .max()
             .expect("should have at least one element in the line")
             .val;
@@ -945,8 +1035,8 @@ impl<'a> LayoutBuilder<'a> {
             }
             Alignment::Right => {
                 let total_width = self.total_line_width(&line);
-                let available = self.params.page_width - self.params.margin_right - self.cursor.x;
-                self.cursor.x = self.params.margin_left + available - total_width;
+                let available = self.column_width - total_width;
+                self.cursor.x = self.params.col_margin_left + available;
 
                 for word in line {
                     match *word.contents {
@@ -959,8 +1049,8 @@ impl<'a> LayoutBuilder<'a> {
             }
             Alignment::Center => {
                 let total_width = self.total_line_width(&line);
-                let available = self.params.page_width - self.params.margin_right - self.cursor.x;
-                self.cursor.x = self.params.margin_left + (available - total_width) / 2.;
+                let available = self.column_width - total_width;
+                self.cursor.x = self.params.col_margin_left + available / 2.;
 
                 for word in line {
                     match *word.contents {
@@ -976,11 +1066,11 @@ impl<'a> LayoutBuilder<'a> {
 
     fn justified_space_width(&self, line: &[Word]) -> f64 {
         let total_width = self.total_line_width(line);
-        let available = self.params.page_width - self.params.margin_right - self.cursor.x;
+        let available =
+            self.column_width - total_width - (self.cursor.x - self.params.col_margin_left);
 
         let space_count = line.iter().filter(|w| w.is_space()).count();
-
-        self.params.space_width + (available - total_width) / space_count as f64
+        self.params.space_width + available / space_count as f64
     }
 
     fn next_page_dims(&mut self) -> (f64, f64) {
@@ -1009,10 +1099,25 @@ impl<'a> LayoutBuilder<'a> {
         self.cursor.y -= delta_y;
 
         if self.cursor.y < self.params.margin_bottom {
-            self.finish_page();
-            self.cursor.y = self.params.page_height
-                - (self.params.margin_top + self.params.pt_size + self.params.leading);
+            if self.current_col >= self.column_count {
+                self.finish_page();
+                self.cursor.y = self.params.page_height
+                    - (self.params.margin_top + self.params.pt_size + self.params.leading);
+                self.current_col = 1;
+                self.params.col_margin_left = self.params.page_margin_left;
+                self.params.col_margin_right = self.params.col_margin_left + self.column_width;
+                self.column_top = self.cursor.y;
+            } else {
+                self.current_col += 1;
+                self.params.col_margin_left += self.column_width + self.column_gutter;
+                self.params.col_margin_right += self.column_width + self.column_gutter;
+                self.cursor.y = self.column_top;
+            }
+        } else if self.current_col == 1 {
+            self.column_bottom = self.cursor.y;
         }
+
+        self.cursor.x = self.params.col_margin_left;
     }
 
     fn total_line_width(&self, line: &[Word]) -> f64 {

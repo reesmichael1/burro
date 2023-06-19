@@ -16,6 +16,8 @@ pub enum Alignment {
     Justify,
 }
 
+const DEFAULT_COL_GUTTER: f64 = 20.0;
+
 #[derive(Debug, PartialEq)]
 pub enum Command {
     Align(ResetArg<Alignment>),
@@ -37,6 +39,7 @@ pub enum Command {
     VSpace(f64),
     HSpace(ResetArg<f64>),
     Rule(RuleOptions),
+    Columns(ColumnOptions),
 }
 
 #[derive(Debug, PartialEq)]
@@ -77,6 +80,12 @@ pub struct RuleOptions {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct ColumnOptions {
+    pub count: u32,
+    pub gutter: f64,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Document {
     pub nodes: Vec<Node>,
     pub config: DocConfig,
@@ -105,6 +114,15 @@ pub struct DocConfig {
     pub consecutive_hyphens: Option<u64>,
     pub letter_space: Option<f64>,
 }
+
+// impl TextUnit {
+//     pub fn text(&self) -> String {
+//         match self {
+//             TextUnit::Str(s) => s.clone(),
+//             _ => " ".to_string(),
+//         }
+//     }
+// }
 
 impl DocConfig {
     fn build() -> Self {
@@ -234,6 +252,8 @@ pub enum ParseError {
     MalformedRule,
     #[error("unsupported curly-brace argument")]
     InvalidArgument,
+    #[error("malformed columns command")]
+    MalformedColumns,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -361,6 +381,10 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             let (arg, rem) = parse_unit_command(tokens)?;
             Ok((Node::Command(Command::HSpace(arg)), pop_spaces(rem)))
         }
+        "columns" => {
+            let (rule, rem) = parse_columns_command(tokens)?;
+            Ok((Node::Command(Command::Columns(rule)), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -411,6 +435,47 @@ fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseErr
             Ok((Command::Align(ResetArg::Reset), rest))
         }
         _ => Err(ParseError::MalformedAlign),
+    }
+}
+
+fn parse_columns_command(tokens: &[Token]) -> Result<(ColumnOptions, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), Token::OpenSquare, Token::Word(count), Token::CloseSquare, rest @ ..] => {
+            Ok((
+                ColumnOptions {
+                    count: count
+                        .parse::<u32>()
+                        .map_err(|_| ParseError::InvalidInt(count.to_string()))?,
+                    gutter: DEFAULT_COL_GUTTER,
+                },
+                rest,
+            ))
+        }
+        [Token::Command(_), Token::OpenBrace, rest @ ..] => {
+            let mut next_tokens = rest;
+            let mut options = ColumnOptions {
+                count: 2,
+                gutter: DEFAULT_COL_GUTTER,
+            };
+            loop {
+                let (arg, rest) = parse_argument(next_tokens)?;
+                if let Some(arg) = arg {
+                    match arg.name.as_ref() {
+                        "gutter" => options.gutter = parse_unit(&arg.value)?,
+                        _ => return Err(ParseError::InvalidArgument),
+                    }
+                }
+                match rest {
+                    [Token::CloseBrace, Token::OpenSquare, Token::Word(count), Token::CloseSquare, rem @ ..] =>
+                    {
+                        options.count = count.parse::<u32>().unwrap();
+                        return Ok((options, rem));
+                    }
+                    _ => next_tokens = rest,
+                }
+            }
+        }
+        _ => Err(ParseError::MalformedColumns),
     }
 }
 
