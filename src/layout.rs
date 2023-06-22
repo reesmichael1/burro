@@ -311,7 +311,7 @@ impl<'a> LayoutBuilder<'a> {
             consecutive_hyphens: vec![],
             hyphens: 0,
             letter_spaces: vec![],
-            current_col: 0,
+            current_col: 1,
             column_count: 1,
             column_width: params.page_width - params.page_margin_left - params.page_margin_right,
             column_gutter: 0.,
@@ -479,6 +479,8 @@ impl<'a> LayoutBuilder<'a> {
                 ResetArg::Reset => {
                     if let Some(width) = self.page_widths.pop() {
                         self.pending_width = Some(width);
+                    } else if self.pending_width.is_some() {
+                        self.pending_width = None;
                     } else {
                         return Err(BurroError::EmptyReset);
                     }
@@ -491,6 +493,8 @@ impl<'a> LayoutBuilder<'a> {
                 ResetArg::Reset => {
                     if let Some(height) = self.page_heights.pop() {
                         self.pending_height = Some(height);
+                    } else if self.pending_height.is_some() {
+                        self.pending_height = None;
                     } else {
                         return Err(BurroError::EmptyReset);
                     }
@@ -1078,6 +1082,10 @@ impl<'a> LayoutBuilder<'a> {
             let current = std::mem::replace(&mut self.params.page_width, w);
             self.page_widths.push(current);
             self.pending_width = None;
+
+            self.column_width = self.params.page_width
+                - self.params.page_margin_left
+                - self.params.page_margin_right;
             w
         } else {
             self.params.page_width
@@ -1098,6 +1106,10 @@ impl<'a> LayoutBuilder<'a> {
     fn advance_y_cursor(&mut self, delta_y: f64) {
         self.cursor.y -= delta_y;
 
+        if self.current_col == 1 {
+            self.column_bottom = self.cursor.y;
+        }
+
         if self.cursor.y < self.params.margin_bottom {
             if self.current_col >= self.column_count {
                 self.finish_page();
@@ -1113,8 +1125,6 @@ impl<'a> LayoutBuilder<'a> {
                 self.params.col_margin_right += self.column_width + self.column_gutter;
                 self.cursor.y = self.column_top;
             }
-        } else if self.current_col == 1 {
-            self.column_bottom = self.cursor.y;
         }
 
         self.cursor.x = self.params.col_margin_left;
