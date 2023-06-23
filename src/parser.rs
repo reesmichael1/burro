@@ -25,6 +25,7 @@ pub enum Command {
     PageWidth(ResetArg<f64>),
     PageHeight(ResetArg<f64>),
     PageBreak,
+    ColumnBreak,
     Leading(ResetArg<f64>),
     ParSpace(ResetArg<f64>),
     SpaceWidth(ResetArg<f64>),
@@ -385,6 +386,7 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             let (rule, rem) = parse_columns_command(tokens)?;
             Ok((Node::Command(Command::Columns(rule)), rem))
         }
+        "column_break" => Ok((Node::Command(Command::ColumnBreak), &tokens[1..])),
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }

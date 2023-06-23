@@ -1,0 +1,20 @@
+.margins[3in]
+.start
+.align[center]
+.letter_space[1.5pt]
+.pt_size[18]
+.vspace[2P]
+.smallcaps[Burro]
+.vspace[1.5P]
+.rule{
+    .width[90%]
+}[0.5pt]
+
+.align[justify]
+; Lines beginning with a ; are commented out.
+; The "-" argument resets the value of these commands 
+; to their previous values.
+.pt_size[-]
+.letter_space[-]
+This is a demonstration of .italic[Burro], a new typesetting language 
+designed for text-heavy documents.

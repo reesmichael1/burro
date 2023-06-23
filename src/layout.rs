@@ -353,19 +353,21 @@ impl<'a> LayoutBuilder<'a> {
             - (self.params.margin_top + self.params.pt_size + self.params.leading);
     }
 
+    fn recalc_margins(&mut self, margin: f64) {
+        self.params.margin_bottom = margin;
+        self.params.margin_top = margin;
+        self.params.page_margin_left = margin;
+        self.params.page_margin_right = margin;
+
+        self.column_width =
+            self.params.page_width - self.params.page_margin_left - self.params.page_margin_right;
+        self.params.col_margin_left = margin;
+        self.params.col_margin_right = margin;
+    }
+
     fn apply_config(&mut self, config: &DocConfig) {
         if let Some(margin) = config.margins {
-            self.params.margin_bottom = margin;
-            self.params.margin_top = margin;
-            self.params.page_margin_left = margin;
-            self.params.page_margin_right = margin;
-
-            self.column_width = self.params.page_width
-                - self.params.page_margin_left
-                - self.params.page_margin_right;
-            self.params.col_margin_left = margin;
-            self.params.col_margin_right = margin;
-
+            self.recalc_margins(margin);
             self.set_cursor_top_left();
         }
 
@@ -449,16 +451,7 @@ impl<'a> LayoutBuilder<'a> {
 
                     ResetArg::Reset => {
                         if let Some(margins) = self.margins.pop() {
-                            self.params.margin_bottom = margins;
-                            self.params.margin_top = margins;
-                            self.params.page_margin_left = margins;
-                            self.params.page_margin_right = margins;
-
-                            self.column_width = self.params.page_width
-                                - self.params.page_margin_left
-                                - self.params.page_margin_right;
-                            self.params.col_margin_left = margins;
-                            self.params.col_margin_right = margins;
+                            self.recalc_margins(margins);
                         } else {
                             return Err(BurroError::EmptyReset);
                         }
@@ -669,9 +662,30 @@ impl<'a> LayoutBuilder<'a> {
                     self.current_col = 1;
                 }
             }
+            Command::ColumnBreak => {
+                if self.current_col >= self.column_count {
+                    self.move_to_next_page();
+                } else {
+                    self.current_col += 1;
+                    self.params.col_margin_left += self.column_width + self.column_gutter;
+                    self.params.col_margin_right += self.column_width + self.column_gutter;
+                    self.cursor.x += self.column_width + self.column_gutter;
+                    self.cursor.y = self.column_top;
+                }
+            }
         }
 
         Ok(())
+    }
+
+    pub fn move_to_next_page(&mut self) {
+        self.finish_page();
+        self.cursor.y = self.params.page_height
+            - (self.params.margin_top + self.params.pt_size + self.params.leading);
+        self.current_col = 1;
+        self.params.col_margin_left = self.params.page_margin_left;
+        self.params.col_margin_right = self.params.col_margin_left + self.column_width;
+        self.column_top = self.cursor.y;
     }
 
     pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
@@ -1112,13 +1126,7 @@ impl<'a> LayoutBuilder<'a> {
 
         if self.cursor.y < self.params.margin_bottom {
             if self.current_col >= self.column_count {
-                self.finish_page();
-                self.cursor.y = self.params.page_height
-                    - (self.params.margin_top + self.params.pt_size + self.params.leading);
-                self.current_col = 1;
-                self.params.col_margin_left = self.params.page_margin_left;
-                self.params.col_margin_right = self.params.col_margin_left + self.column_width;
-                self.column_top = self.cursor.y;
+                self.move_to_next_page();
             } else {
                 self.current_col += 1;
                 self.params.col_margin_left += self.column_width + self.column_gutter;
