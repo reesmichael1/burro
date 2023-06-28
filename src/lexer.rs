@@ -181,6 +181,24 @@ fn lex_string(chars: &[char]) -> (String, &[char]) {
 
 pub fn lex(input: &str) -> Vec<Token> {
     let chars: Vec<char> = input.trim().chars().collect();
+    let mut chars = &chars[..];
+
+    // Since we require comments to be at the beginning of the line,
+    // we can normally check if they come after a newline.
+    // However, this breaks for comments at the very beginning of the document,
+    // so we check for those explicitly here as well.
+    if chars.starts_with(&[';']) {
+        while chars.len() > 0 && chars[0] == ';' {
+            chars = discard_comment(&chars);
+            if chars[0] == '\n' {
+                chars = &chars[1..];
+                if chars.len() > 0 && chars[0] == '\r' {
+                    chars = &chars[1..];
+                }
+            }
+        }
+    }
+
     lex_rest(&chars[..])
 }
 
@@ -342,6 +360,23 @@ c ; d
     .arg1[val1]
     .arg2[val2]
 }";
+        assert_eq!(expected, lex(input));
+    }
+
+    #[test]
+    fn comment_at_beginning() {
+        let expected = vec![
+            Token::Command("start".to_string()),
+            Token::Newline,
+            Token::Word("Hello".to_string()),
+            Token::Space,
+            Token::Word("world!".to_string()),
+        ];
+
+        let input = "; Document summary
+.start
+Hello world!";
+
         assert_eq!(expected, lex(input));
     }
 }

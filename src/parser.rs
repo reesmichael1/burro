@@ -1232,4 +1232,19 @@ Hello .break world";
         assert_eq!(expected, parse_tokens(&lex(input))?);
         Ok(())
     }
+
+    #[test]
+    fn comment_at_beginning() -> Result<(), ParseError> {
+        let input = "; Document summary
+.start
+Hello world!";
+
+        let expected = Document {
+            config: DocConfig::default(),
+            nodes: vec![Node::Paragraph(vec![words_to_text(&["Hello", "world!"])])],
+        };
+
+        assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
 }
