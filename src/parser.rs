@@ -116,15 +116,6 @@ pub struct DocConfig {
     pub letter_space: Option<f64>,
 }
 
-// impl TextUnit {
-//     pub fn text(&self) -> String {
-//         match self {
-//             TextUnit::Str(s) => s.clone(),
-//             _ => " ".to_string(),
-//         }
-//     }
-// }
-
 impl DocConfig {
     fn build() -> Self {
         Self::default()
@@ -227,8 +218,6 @@ pub enum ParseError {
     InvalidStyleBlock,
     #[error("expected to find more tokens, found EOF instead")]
     EndedEarly,
-    #[error("malformed pt_size command")]
-    MalformedPtSize,
     #[error("malformed command with measure unit argument")]
     MalformedUnitCommand,
     #[error("invalid command encountered in document configuration")]
@@ -361,11 +350,8 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         }
 
         "pt_size" => {
-            if let (StyleBlock::Comm(pt_size), rem) = parse_point_size(&tokens[1..])? {
-                Ok((Node::Command(pt_size), rem))
-            } else {
-                unreachable!()
-            }
+            let (size, rem) = parse_unit_command(tokens)?;
+            Ok((Node::Command(Command::PtSize(size)), pop_spaces(rem)))
         }
         "break" => Ok((Node::Command(Command::Break), pop_spaces(&tokens[1..]))),
         "spread" => Ok((Node::Command(Command::Spread), pop_spaces(&tokens[1..]))),
@@ -570,26 +556,6 @@ fn parse_smallcaps_command(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), P
     }
 }
 
-fn parse_point_size(tokens: &[Token]) -> Result<(StyleBlock, &[Token]), ParseError> {
-    match tokens {
-        [Token::OpenSquare, Token::Word(size), Token::CloseSquare, rest @ ..] => {
-            let size = size
-                .parse::<f64>()
-                .map_err(|_| ParseError::MalformedPtSize)?;
-
-            Ok((
-                StyleBlock::Comm(Command::PtSize(ResetArg::Explicit(size))),
-                pop_spaces(rest),
-            ))
-        }
-        [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => Ok((
-            StyleBlock::Comm(Command::PtSize(ResetArg::Reset)),
-            pop_spaces(rest),
-        )),
-        _ => Err(ParseError::MalformedPtSize),
-    }
-}
-
 fn parse_style_block_list(tokens: &[Token]) -> Result<(Vec<StyleBlock>, &[Token]), ParseError> {
     match tokens {
         [Token::CloseSquare, rest @ ..] => Ok((vec![], rest)),
@@ -664,20 +630,6 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
         match &tokens[0] {
             Token::Command(name) => match name.as_ref() {
                 "start" => return Ok((config, tokens)),
-                "pt_size" => {
-                    let (com, rem) = parse_point_size(&tokens[1..])?;
-                    match com {
-                        StyleBlock::Comm(Command::PtSize(arg)) => match arg {
-                            ResetArg::Explicit(size) => {
-                                config = config.with_pt_size(size as f64);
-                            }
-                            ResetArg::Reset => return Err(ParseError::InvalidConfiguration),
-                        },
-                        _ => unreachable!(),
-                    }
-
-                    tokens = rem;
-                }
                 // This command is only available in the config section
                 // (at least for now), so handle it separately
                 "indent_first" => {
@@ -723,6 +675,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         }
                         Node::Command(Command::LetterSpace(ResetArg::Explicit(space))) => {
                             config = config.with_letter_space(space);
+                        }
+                        Node::Command(Command::PtSize(ResetArg::Explicit(size))) => {
+                            config = config.with_pt_size(size);
                         }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }
