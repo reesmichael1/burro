@@ -8,3 +8,6 @@ Now, we're back to a more standard 2 points. Once this line is long enough, you'
 
 .leading[-]
 Now, we've used the reset command to put us back to the old value of 9 points. If everything has worked correctly, we should have lots of space between the lines once again.
+
+.leading[-7pt]
+Finally, we've used a relative argument to put us back to 2 points. It's much more pleasant to read now!

@@ -24,4 +24,6 @@ pub enum BurroError {
     UnfoundFontMap,
     #[error("used reset command without any previous state")]
     EmptyReset,
+    #[error("tried to use relative argument for an unsupported command")]
+    InvalidRelative,
 }

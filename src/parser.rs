@@ -46,6 +46,7 @@ pub enum Command {
 #[derive(Debug, PartialEq)]
 pub enum ResetArg<T> {
     Explicit(T),
+    Relative(T),
     Reset,
 }
 
@@ -244,6 +245,8 @@ pub enum ParseError {
     InvalidArgument,
     #[error("malformed columns command")]
     MalformedColumns,
+    #[error("tried to use relative argument for an unsupported command")]
+    InvalidRelative,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -334,6 +337,7 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
                     rem,
                 )),
                 ResetArg::Reset => Ok(((Node::Command(Command::Font(ResetArg::Reset))), rem)),
+                ResetArg::Relative(_) => Err(ParseError::InvalidRelative),
             }
         }
         "consecutive_hyphens" => {
@@ -358,7 +362,7 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         "vspace" => {
             let (arg, rem) = parse_unit_command(tokens)?;
             match arg {
-                ResetArg::Explicit(dim) => {
+                ResetArg::Explicit(dim) | ResetArg::Relative(dim) => {
                     Ok((Node::Command(Command::VSpace(dim)), pop_spaces(rem)))
                 }
                 ResetArg::Reset => return Err(ParseError::InvalidReset),
@@ -366,7 +370,13 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         }
         "hspace" => {
             let (arg, rem) = parse_unit_command(tokens)?;
-            Ok((Node::Command(Command::HSpace(arg)), pop_spaces(rem)))
+            match arg {
+                ResetArg::Explicit(dim) | ResetArg::Relative(dim) => Ok((
+                    Node::Command(Command::HSpace(ResetArg::Explicit(dim))),
+                    pop_spaces(rem),
+                )),
+                ResetArg::Reset => Ok((Node::Command(Command::HSpace(arg)), pop_spaces(rem))),
+            }
         }
         "columns" => {
             let (rule, rem) = parse_columns_command(tokens)?;
@@ -449,7 +459,7 @@ fn parse_columns_command(tokens: &[Token]) -> Result<(ColumnOptions, &[Token]), 
                 let (arg, rest) = parse_argument(next_tokens)?;
                 if let Some(arg) = arg {
                     match arg.name.as_ref() {
-                        "gutter" => options.gutter = parse_unit(&arg.value)?,
+                        "gutter" => options.gutter = parse_unit(&arg.value)?.value()?,
                         _ => return Err(ParseError::InvalidArgument),
                     }
                 }
@@ -474,7 +484,7 @@ fn parse_rule_command(tokens: &[Token]) -> Result<(RuleOptions, &[Token]), Parse
                 RuleOptions {
                     width: 1.0,
                     indent: 0.0,
-                    weight: parse_unit(&weight)?,
+                    weight: parse_unit(&weight)?.value()?,
                 },
                 rest,
             ))
@@ -490,15 +500,15 @@ fn parse_rule_command(tokens: &[Token]) -> Result<(RuleOptions, &[Token]), Parse
                 let (arg, rest) = parse_argument(next_tokens)?;
                 if let Some(arg) = arg {
                     match arg.name.as_ref() {
-                        "width" => options.width = parse_unit(&arg.value)?,
-                        "indent" => options.indent = parse_unit(&arg.value)?,
+                        "width" => options.width = parse_unit(&arg.value)?.value()?,
+                        "indent" => options.indent = parse_unit(&arg.value)?.value()?,
                         _ => return Err(ParseError::InvalidArgument),
                     }
                 }
                 match rest {
                     [Token::CloseBrace, Token::OpenSquare, Token::Word(weight), Token::CloseSquare, rem @ ..] =>
                     {
-                        options.weight = parse_unit(&weight)?;
+                        options.weight = parse_unit(&weight)?.value()?;
                         return Ok((options, rem));
                     }
                     _ => next_tokens = rest,
@@ -691,36 +701,69 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum PointsVal {
+    Static(f64),
+    Relative(f64),
+}
+
+impl PointsVal {
+    fn value(&self) -> Result<f64, ParseError> {
+        match self {
+            PointsVal::Relative(_) => Err(ParseError::InvalidRelative),
+            PointsVal::Static(val) => Ok(*val),
+        }
+    }
+}
+
 // Internally, we keep everything in points,
 // but we want to accept arguments in many units:
 // points, picas, millimeters, inches, etc.
 // (We'll add more units as needed.)
-fn parse_unit(input: &str) -> Result<f64, ParseError> {
+fn parse_unit(input: &str) -> Result<PointsVal, ParseError> {
     lazy_static! {
-        static ref RE: Regex = Regex::new(r"^(?P<num>-?[\d\.]+)(?P<unit>[\w%]*)$")
+        static ref RE: Regex = Regex::new(r"^(?P<sign>[+-]?)(?P<num>[\d\.]+)(?P<unit>[\w%]*)$")
             .expect("should have a valid regex here");
     }
     let caps = RE
         .captures(input)
         .ok_or(ParseError::InvalidUnit(input.to_string()))?;
     let num = caps.name("num").expect("should have a matching group");
-    let num = num
+    let mut num = num
         .as_str()
         .parse::<f64>()
         .map_err(|_| ParseError::InvalidInt(input.to_string()))?;
 
+    let mut relative = false;
+
     if let Some(unit) = caps.name("unit") {
-        match unit.as_str() {
-            "pt" => Ok(num),
-            "in" => Ok(72. * num),
-            "mm" => Ok(2.83464576 * num),
-            "P" => Ok(12. * num),
-            "" => Ok(num),
-            "%" => Ok(num / 100.),
-            _ => Err(ParseError::InvalidUnit(unit.as_str().to_string())),
-        }
+        num = match unit.as_str() {
+            "pt" => num,
+            "in" => 72. * num,
+            "mm" => 2.83464576 * num,
+            "P" => 12. * num,
+            "" => num,
+            "%" => num / 100.,
+            _ => return Err(ParseError::InvalidUnit(unit.as_str().to_string())),
+        };
+    }
+
+    if let Some(sign) = caps.name("sign") {
+        match sign.as_str() {
+            "" => {}
+            "+" => relative = true,
+            "-" => {
+                relative = true;
+                num *= -1.;
+            }
+            _ => unreachable!(),
+        };
+    };
+
+    if relative {
+        Ok(PointsVal::Relative(num))
     } else {
-        Ok(num)
+        Ok(PointsVal::Static(num))
     }
 }
 
@@ -755,7 +798,10 @@ fn parse_str_command(tokens: &[Token]) -> Result<(ResetArg<String>, &[Token]), P
 fn parse_unit_command(tokens: &[Token]) -> Result<(ResetArg<f64>, &[Token]), ParseError> {
     match tokens {
         [Token::Command(_), Token::OpenSquare, Token::Word(unit), Token::CloseSquare, rest @ ..] => {
-            Ok((ResetArg::Explicit(parse_unit(&unit)?), rest))
+            match parse_unit(&unit)? {
+                PointsVal::Relative(val) => Ok((ResetArg::Relative(val), rest)),
+                PointsVal::Static(val) => Ok((ResetArg::Explicit(val), rest)),
+            }
         }
         [Token::Command(_), Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
             Ok((ResetArg::Reset, rest))
@@ -1043,43 +1089,53 @@ b";
 
     #[test]
     fn unit_conversion_default_points() -> Result<(), ParseError> {
-        assert_eq!(12.0, parse_unit("12")?);
+        assert_eq!(PointsVal::Static(12.0), parse_unit("12")?);
         Ok(())
     }
 
     #[test]
     fn unit_conversion_explicit_points() -> Result<(), ParseError> {
-        assert_eq!(14.0, parse_unit("14pt")?);
+        assert_eq!(PointsVal::Static(14.0), parse_unit("14pt")?);
         Ok(())
     }
 
     #[test]
     fn unit_conversion_picas() -> Result<(), ParseError> {
-        assert_eq!(30.0, parse_unit("2.5P")?);
+        assert_eq!(PointsVal::Static(30.0), parse_unit("2.5P")?);
         Ok(())
     }
 
     #[test]
     fn unit_conversion_inches() -> Result<(), ParseError> {
-        assert_eq!(36.0, parse_unit("0.5in")?);
+        assert_eq!(PointsVal::Static(36.0), parse_unit("0.5in")?);
         Ok(())
     }
 
     #[test]
     fn unit_conversion_millimeters() -> Result<(), ParseError> {
-        assert_f64_near!(28.3464576, parse_unit("10mm")?);
+        if let PointsVal::Static(value) = parse_unit("10mm")? {
+            assert_f64_near!(28.3464576, value);
+        } else {
+            assert!(false);
+        }
         Ok(())
     }
 
     #[test]
     fn unit_conversion_percent() -> Result<(), ParseError> {
-        assert_f64_near!(0.5, parse_unit("50%")?);
+        assert_eq!(PointsVal::Static(0.5), parse_unit("50%")?);
         Ok(())
     }
 
     #[test]
-    fn unit_conversion_negative() -> Result<(), ParseError> {
-        assert_f64_near!(-24., parse_unit("-2P")?);
+    fn negative_relative_unit() -> Result<(), ParseError> {
+        assert_eq!(PointsVal::Relative(-24.), parse_unit("-2P")?);
+        Ok(())
+    }
+
+    #[test]
+    fn positive_relative_unit() -> Result<(), ParseError> {
+        assert_eq!(PointsVal::Relative(6.), parse_unit("+6pt")?);
         Ok(())
     }
 

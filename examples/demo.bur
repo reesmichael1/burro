@@ -9,7 +9,7 @@
 .align[center]
 .family[default]
 .letter_space[1.5pt]
-.pt_size[18]
+.pt_size[+6]
 .vspace[2P]
 .smallcaps[Burro]
 .vspace[1.5P]

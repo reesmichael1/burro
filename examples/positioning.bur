@@ -11,3 +11,14 @@ In this paragraph, .hspace[4P] we've added four picas of horizontal space here i
 .hspace[-]
 ; Bug here: the ellipsis at the beginning of the line is treated as a command
 \..\.it can be used to reset the cursor after adding vertical space!
+
+You can also go backwards along the line with a negative argument to \.hspace:
+.vspace[1P]
+.hspace[-8P]
+Now we're back to the left!
+
+.vspace[7P]
+and this line should be at the bottom (even though they're reversed in the document).
+.vspace[-3P]
+.hspace[-]
+This should be the second to last line,

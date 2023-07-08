@@ -56,6 +56,31 @@ pub struct Position {
     pub y: f64,
 }
 
+// Helper trait to pass numeric arguments to handle_reset_val
+// This should only be implemented for legal relative values (i.e., not fonts/strings)
+trait UpdateRelative {
+    fn update(&mut self, _: &Self) {
+        unreachable!()
+    }
+}
+
+impl UpdateRelative for f64 {
+    fn update(&mut self, delta: &f64) {
+        *self += delta;
+    }
+}
+
+impl UpdateRelative for u64 {
+    fn update(&mut self, delta: &u64) {
+        *self += delta;
+    }
+}
+
+// UpdateRelative is only needed for legal relative arguments,
+// which excludes fonts or strings.
+impl UpdateRelative for Font {}
+impl UpdateRelative for String {}
+
 #[derive(Debug, PartialEq)]
 enum Alignment {
     Left,
@@ -442,19 +467,24 @@ impl<'a> LayoutBuilder<'a> {
                         return Err(BurroError::EmptyReset);
                     }
                 }
+                ResetArg::Relative(_) => return Err(BurroError::InvalidRelative),
             },
             Command::Margins(arg) => {
                 match arg {
                     ResetArg::Explicit(dim) => {
                         self.set_all_margins(*dim);
                     }
-
                     ResetArg::Reset => {
                         if let Some(margins) = self.margins.pop() {
                             self.recalc_margins(margins);
                         } else {
                             return Err(BurroError::EmptyReset);
                         }
+                    }
+                    ResetArg::Relative(delta) => {
+                        // TODO: watch out once we support individual margins
+                        let current = self.params.margin_top;
+                        self.set_all_margins(current + delta);
                     }
                 }
 
@@ -478,6 +508,12 @@ impl<'a> LayoutBuilder<'a> {
                         return Err(BurroError::EmptyReset);
                     }
                 }
+                ResetArg::Relative(delta) => {
+                    if let Some(width) = self.pending_width {
+                        self.page_widths.push(width);
+                    }
+                    self.pending_width = Some(self.params.page_width + delta);
+                }
             },
             Command::PageHeight(arg) => match arg {
                 ResetArg::Explicit(dim) => {
@@ -491,6 +527,12 @@ impl<'a> LayoutBuilder<'a> {
                     } else {
                         return Err(BurroError::EmptyReset);
                     }
+                }
+                ResetArg::Relative(delta) => {
+                    if let Some(height) = self.pending_height {
+                        self.page_heights.push(height);
+                    }
+                    self.pending_height = Some(self.params.page_height + delta);
                 }
             },
 
@@ -546,6 +588,16 @@ impl<'a> LayoutBuilder<'a> {
                         return Err(BurroError::EmptyReset);
                     }
                 }
+                ResetArg::Relative(delta) => {
+                    let current = self.params.pt_size;
+                    let size = current + delta;
+                    // TODO: check if the width has been explicitly set,
+                    // and don't override if so.
+                    self.params.space_width = size / 4.;
+                    self.params.min_space_width = size / 8.;
+                    self.pt_sizes.push(current);
+                    self.params.pt_size = size;
+                }
             },
             Command::Break => {
                 self.emit_remaining_line();
@@ -575,6 +627,7 @@ impl<'a> LayoutBuilder<'a> {
                     self.emit_remaining_line();
                     self.cursor.x = self.params.page_margin_left;
                 }
+                ResetArg::Relative(_) => return Err(BurroError::InvalidRelative),
             },
 
             Command::Rule(opts) => {
@@ -1134,8 +1187,6 @@ impl<'a> LayoutBuilder<'a> {
                 self.cursor.y = self.column_top;
             }
         }
-
-        self.cursor.x = self.params.col_margin_left;
     }
 
     fn total_line_width(&self, line: &[Word]) -> f64 {
@@ -1166,7 +1217,7 @@ fn font_units_to_points(units: i32, upem: i32, pt_size: f64) -> f64 {
     (units as f64) * pt_size / (upem as f64)
 }
 
-fn handle_reset_val<T: Clone>(
+fn handle_reset_val<T: Clone + UpdateRelative>(
     input: &ResetArg<T>,
     value: &mut T,
     queue: &mut Vec<T>,
@@ -1174,6 +1225,11 @@ fn handle_reset_val<T: Clone>(
     match input {
         ResetArg::Explicit(i) => {
             let current = std::mem::replace(value, i.clone());
+            queue.push(current);
+        }
+        ResetArg::Relative(delta) => {
+            let current = value.clone();
+            value.update(delta);
             queue.push(current);
         }
         ResetArg::Reset => {
