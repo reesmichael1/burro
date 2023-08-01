@@ -3,7 +3,7 @@ use crate::parser::ParseError;
 #[derive(Debug, PartialEq)]
 pub struct Tab {
     pub indent: f64,
-    pub direction: TabDirection,
+    pub direction: Option<TabDirection>,
     pub quad: Option<TabDirection>,
     pub length: f64,
     pub name: Option<String>,

@@ -533,8 +533,11 @@ fn parse_define_tab_command(tokens: &[Token]) -> Result<(Tab, &[Token]), ParseEr
             let direction = options
                 .vars
                 .get("direction")
-                .map(|q| TabDirection::from_str(q).unwrap())
-                .unwrap();
+                .map(|q| TabDirection::from_str(q).unwrap());
+
+            if quad.is_some() && direction.is_some() || quad.is_none() && direction.is_none() {
+                return Err(ParseError::MalformedDefineTab);
+            }
 
             Ok((
                 Tab {
@@ -1388,7 +1391,7 @@ Hello world!";
 
         let tab = Tab {
             indent: 0.0,
-            direction: TabDirection::Left,
+            direction: Some(TabDirection::Left),
             length: 60.0,
             quad: None,
             name: Some("test1".to_string()),
@@ -1410,7 +1413,6 @@ Hello world!";
     fn tab_parsing_with_quad() -> Result<(), ParseError> {
         let input = ".define_tab{
     .indent[0P]
-    .direction[left]
     .length[3P]
     .quad[right]
 }[test1]
@@ -1418,7 +1420,7 @@ Hello world!";
 
         let tab = Tab {
             indent: 0.0,
-            direction: TabDirection::Left,
+            direction: None,
             length: 36.0,
             quad: Some(TabDirection::Right),
             name: Some("test1".to_string()),
@@ -1453,7 +1455,7 @@ Hello world!";
 
         let tab1 = Tab {
             indent: 0.0,
-            direction: TabDirection::Left,
+            direction: Some(TabDirection::Left),
             length: 36.0,
             quad: None,
             name: Some("1".to_string()),
@@ -1461,7 +1463,7 @@ Hello world!";
 
         let tab2 = Tab {
             indent: 48.0,
-            direction: TabDirection::Right,
+            direction: Some(TabDirection::Right),
             length: 96.0,
             quad: None,
             name: Some("2".to_string()),
