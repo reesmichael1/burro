@@ -26,4 +26,6 @@ pub enum BurroError {
     EmptyReset,
     #[error("tried to use relative argument for an unsupported command")]
     InvalidRelative,
+    #[error("encountered tab definition in document body")]
+    TabDefInBody,
 }

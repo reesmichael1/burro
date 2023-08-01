@@ -5,6 +5,7 @@ mod layout;
 mod lexer;
 mod literals;
 mod parser;
+mod tab;
 mod util;
 mod writer;
 

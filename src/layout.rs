@@ -726,6 +726,9 @@ impl<'a> LayoutBuilder<'a> {
                     self.cursor.y = self.column_top;
                 }
             }
+            Command::DefineTab(_) => {
+                return Err(BurroError::TabDefInBody);
+            }
         }
 
         Ok(())

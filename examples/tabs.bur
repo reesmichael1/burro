@@ -1,0 +1,26 @@
+.define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[5P]
+}[criterion]
+.define_tab{
+    .indent[8P]
+    .direction[center]
+    .length[9P]
+}[evaluation]
+.define_tab{
+    .indent[19P]
+    .quad[left]
+    .length[17P]
+}[comments]
+; .tab_list{
+;     .1[name]
+;     .2[criterion]
+;     .3[comments]
+; }
+
+.start
+; .load_tabs[eval]
+; .tab[criterion] CRITERION .tab_next EVALUATION .tab_next COMMENTS
+; 
+; .tab[criterion] Service .tab_next Good .tab_next Many clients specifically request support from Joe by name.
