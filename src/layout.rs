@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use hyphenation::*;
@@ -11,6 +12,7 @@ use crate::fonts::Font;
 use crate::literals;
 use crate::parser;
 use crate::parser::{Command, DocConfig, Document, Node, ResetArg, StyleBlock, TextUnit};
+use crate::tab::Tab;
 use crate::util::OrdFloat;
 
 #[derive(Debug, PartialEq)]
@@ -229,6 +231,9 @@ pub struct LayoutBuilder<'a> {
     column_gutter: f64,
     column_top: f64,
     column_bottom: f64,
+    current_tabs: Option<Vec<Tab>>,
+    _current_tab: Option<usize>,
+    tab_lists: HashMap<String, Vec<Rc<Tab>>>,
 }
 
 fn load_font_data<'a>(
@@ -344,6 +349,9 @@ impl<'a> LayoutBuilder<'a> {
             column_bottom: cursor.y,
             params,
             cursor,
+            _current_tab: None,
+            current_tabs: None,
+            tab_lists: HashMap::new(),
         })
     }
 
@@ -390,7 +398,7 @@ impl<'a> LayoutBuilder<'a> {
         self.params.col_margin_right = margin;
     }
 
-    fn apply_config(&mut self, config: &DocConfig) {
+    fn apply_config(&mut self, config: &DocConfig) -> Result<(), BurroError> {
         if let Some(margin) = config.margins {
             self.recalc_margins(margin);
             self.set_cursor_top_left();
@@ -454,6 +462,44 @@ impl<'a> LayoutBuilder<'a> {
             self.current_page = self.new_page();
             self.set_cursor_top_left();
         }
+
+        self.assign_tabs(config)?;
+
+        Ok(())
+    }
+
+    fn assign_tabs(&mut self, config: &DocConfig) -> Result<(), BurroError> {
+        self.tab_lists.clear();
+        self.current_tabs = None;
+
+        if config.tabs.len() > 0 {
+            let tabs_by_name: HashMap<&str, Rc<Tab>> =
+                HashMap::from_iter(config.tabs.iter().map(|t| {
+                    (
+                        t.name
+                            .as_ref()
+                            .expect("all tabs should have a name in layout, please file a bug")
+                            .as_str(),
+                        Rc::new(t.clone()),
+                    )
+                }));
+
+            for (list, tabs) in config.tab_lists.iter() {
+                let mut tab_list: Vec<Rc<Tab>> = vec![];
+                for tab_name in tabs {
+                    let tab = match tabs_by_name.get(tab_name.as_str()) {
+                        Some(tab) => tab,
+                        None => return Err(BurroError::UndefinedTab(tab_name.clone())),
+                    };
+
+                    tab_list.push(tab.clone());
+                }
+
+                self.tab_lists.insert(list.to_string(), tab_list);
+            }
+        }
+
+        Ok(())
     }
 
     fn handle_command(&mut self, c: &'a Command) -> Result<(), BurroError> {
@@ -732,6 +778,9 @@ impl<'a> LayoutBuilder<'a> {
             Command::TabList(..) => {
                 return Err(BurroError::TabListInBody);
             }
+            Command::LoadTabs(_name) => {
+                // TODO!
+            }
         }
 
         Ok(())
@@ -748,7 +797,7 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
-        self.apply_config(&doc.config);
+        self.apply_config(&doc.config)?;
 
         for node in &doc.nodes {
             match node {

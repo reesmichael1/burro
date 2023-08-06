@@ -30,4 +30,6 @@ pub enum BurroError {
     TabDefInBody,
     #[error("encountered tab list in document body")]
     TabListInBody,
+    #[error("tried to reference tab '{0}' that was not defined")]
+    UndefinedTab(String),
 }

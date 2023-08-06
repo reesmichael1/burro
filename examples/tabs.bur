@@ -14,13 +14,15 @@
     .length[17P]
 }[comments]
 .tab_list{
-    .1[name]
-    .2[criterion]
+    .1[criterion]
+    .2[evaluation]
     .3[comments]
 }[eval]
 
 .start
-; .load_tabs[eval]
+.load_tabs[eval]
 ; .tab[criterion] CRITERION .tab_next EVALUATION .tab_next COMMENTS
 ; 
 ; .tab[criterion] Service .tab_next Good .tab_next Many clients specifically request support from Joe by name.
+;
+; .tab_quit

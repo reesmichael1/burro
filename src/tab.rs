@@ -1,6 +1,6 @@
 use crate::parser::ParseError;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tab {
     pub indent: f64,
     pub direction: Option<TabDirection>,
@@ -9,7 +9,7 @@ pub struct Tab {
     pub name: Option<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum TabDirection {
     Left,
     Right,

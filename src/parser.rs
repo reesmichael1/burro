@@ -45,6 +45,7 @@ pub enum Command {
     Columns(ColumnOptions),
     DefineTab(Tab),
     TabList(Vec<String>, String),
+    LoadTabs(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -433,6 +434,15 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             }
 
             Ok((Node::Command(Command::TabList(tabs, name)), rem))
+        }
+        "load_tabs" => {
+            let (list_name, rem) = parse_str_command(tokens)?;
+            match list_name {
+                ResetArg::Explicit(name) => Ok((Node::Command(Command::LoadTabs(name)), rem)),
+                // This *should* never be a relative
+                // because parse_str_command only returns Explicit and Reset
+                _ => Err(ParseError::InvalidReset),
+            }
         }
         _ => Err(ParseError::UnknownCommand(name)),
     }
