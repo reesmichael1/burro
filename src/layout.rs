@@ -729,6 +729,9 @@ impl<'a> LayoutBuilder<'a> {
             Command::DefineTab(_) => {
                 return Err(BurroError::TabDefInBody);
             }
+            Command::TabList(..) => {
+                return Err(BurroError::TabListInBody);
+            }
         }
 
         Ok(())

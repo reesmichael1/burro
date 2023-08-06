@@ -44,6 +44,7 @@ pub enum Command {
     Rule(RuleOptions),
     Columns(ColumnOptions),
     DefineTab(Tab),
+    TabList(Vec<String>, String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -119,6 +120,7 @@ pub struct DocConfig {
     pub consecutive_hyphens: Option<u64>,
     pub letter_space: Option<f64>,
     pub tabs: Vec<Tab>,
+    pub tab_lists: HashMap<String, Vec<String>>,
 }
 
 impl DocConfig {
@@ -200,11 +202,15 @@ impl DocConfig {
         let mut tab = tab;
 
         if tab.name.is_none() {
-            dbg!(self.tabs.len());
             tab.name = Some(format!("{}", self.tabs.len() + 1));
         }
 
         self.tabs.push(tab);
+        self
+    }
+
+    fn add_tab_list(mut self, list: Vec<String>, name: String) -> Self {
+        self.tab_lists.insert(name, list);
         self
     }
 }
@@ -271,6 +277,8 @@ pub enum ParseError {
     MalformedCurlyBrace,
     #[error("invalid tab direction")]
     InvalidTabDirection,
+    #[error("bad tab list syntax")]
+    MalformedTabList,
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -411,6 +419,21 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             let (tab, rem) = parse_define_tab_command(tokens)?;
             Ok((Node::Command(Command::DefineTab(tab)), rem))
         }
+        "tab_list" => {
+            let (list, name, rem) = parse_tab_list_command(tokens)?;
+            let mut counter = 1;
+            let mut tabs = vec![];
+            loop {
+                if let Some(tab) = list.get(&counter) {
+                    tabs.push(tab.clone());
+                    counter += 1;
+                } else {
+                    break;
+                }
+            }
+
+            Ok((Node::Command(Command::TabList(tabs, name)), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -503,6 +526,33 @@ fn parse_curly_brace_syntax(tokens: &[Token]) -> Result<(CurlyBraceData, &[Token
             }
         }
         _ => Err(ParseError::MissingCurlyBrace),
+    }
+}
+
+fn parse_tab_list_command(
+    tokens: &[Token],
+) -> Result<(HashMap<usize, String>, String, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), rest @ ..] => {
+            let (options, rest) = parse_curly_brace_syntax(rest)?;
+
+            if let Some(name) = options.command {
+                let mut tabs = HashMap::new();
+                for (num, name) in options.vars {
+                    let num = match num.parse::<usize>() {
+                        Ok(num) => num,
+                        Err(_) => return Err(ParseError::MalformedTabList),
+                    };
+
+                    tabs.insert(num, name);
+                }
+
+                Ok((tabs, name, rest))
+            } else {
+                Err(ParseError::MalformedTabList)
+            }
+        }
+        _ => Err(ParseError::MalformedTabList),
     }
 }
 
@@ -809,6 +859,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         }
                         Node::Command(Command::DefineTab(tab)) => {
                             config = config.add_tab(tab);
+                        }
+                        Node::Command(Command::TabList(list, name)) => {
+                            config = config.add_tab_list(list, name);
                         }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }

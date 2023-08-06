@@ -13,11 +13,11 @@
     .quad[left]
     .length[17P]
 }[comments]
-; .tab_list{
-;     .1[name]
-;     .2[criterion]
-;     .3[comments]
-; }
+.tab_list{
+    .1[name]
+    .2[criterion]
+    .3[comments]
+}[eval]
 
 .start
 ; .load_tabs[eval]

@@ -28,4 +28,6 @@ pub enum BurroError {
     InvalidRelative,
     #[error("encountered tab definition in document body")]
     TabDefInBody,
+    #[error("encountered tab list in document body")]
+    TabListInBody,
 }
