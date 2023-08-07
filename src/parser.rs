@@ -249,6 +249,8 @@ pub enum ParseError {
     #[error("invalid value {0} encountered when integer expected")]
     InvalidInt(String),
     #[error("invalid unit {0} encountered as measurement")]
+    InvalidBool(String),
+    #[error("invalid value {0} encountered when bool expected")]
     InvalidUnit(String),
     #[error("invalid command with string argument")]
     MalformedStrCommand,
@@ -286,6 +288,14 @@ fn pop_spaces(tokens: &[Token]) -> &[Token] {
     match tokens {
         [Token::Space, rest @ ..] => pop_spaces(rest),
         _ => tokens,
+    }
+}
+
+fn parse_bool_arg(val: &str) -> Result<bool, ParseError> {
+    match val {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(ParseError::InvalidBool(val.to_string())),
     }
 }
 
@@ -586,18 +596,16 @@ fn parse_define_tab_command(tokens: &[Token]) -> Result<(Tab, &[Token]), ParseEr
                 .map(|l| parse_unit(l).unwrap())
                 .map(|rv| rv.value().unwrap())
                 .unwrap();
-            let quad = options
-                .vars
-                .get("quad")
-                .map(|q| TabDirection::from_str(q).unwrap());
             let direction = options
                 .vars
                 .get("direction")
-                .map(|q| TabDirection::from_str(q).unwrap());
+                .map(|q| TabDirection::from_str(q).unwrap()).unwrap();
 
-            if quad.is_some() && direction.is_some() || quad.is_none() && direction.is_none() {
-                return Err(ParseError::MalformedDefineTab);
-            }
+            // Enable quad filling by default
+            let quad = match options.vars.get("quad") {
+                Some(val) => parse_bool_arg(val)?,
+                None => true,
+            };
 
             Ok((
                 Tab {
@@ -1454,9 +1462,9 @@ Hello world!";
 
         let tab = Tab {
             indent: 0.0,
-            direction: Some(TabDirection::Left),
+            direction: TabDirection::Left,
             length: 60.0,
-            quad: None,
+            quad: true,
             name: Some("test1".to_string()),
         };
 
@@ -1477,15 +1485,16 @@ Hello world!";
         let input = ".define_tab{
     .indent[0P]
     .length[3P]
-    .quad[right]
+    .direction[right]
+    .quad[false]
 }[test1]
 .start";
 
         let tab = Tab {
             indent: 0.0,
-            direction: None,
+            direction: TabDirection::Right,
             length: 36.0,
-            quad: Some(TabDirection::Right),
+            quad: false,
             name: Some("test1".to_string()),
         };
 
@@ -1518,17 +1527,17 @@ Hello world!";
 
         let tab1 = Tab {
             indent: 0.0,
-            direction: Some(TabDirection::Left),
+            direction: TabDirection::Left,
             length: 36.0,
-            quad: None,
+            quad: true,
             name: Some("1".to_string()),
         };
 
         let tab2 = Tab {
             indent: 48.0,
-            direction: Some(TabDirection::Right),
+            direction: TabDirection::Right,
             length: 96.0,
-            quad: None,
+            quad: true,
             name: Some("2".to_string()),
         };
 
