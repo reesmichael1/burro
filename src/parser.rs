@@ -46,6 +46,10 @@ pub enum Command {
     DefineTab(Tab),
     TabList(Vec<String>, String),
     LoadTabs(String),
+    Tab(String),
+    NextTab,
+    PreviousTab,
+    QuitTabs,
 }
 
 #[derive(Debug, PartialEq)]
@@ -454,6 +458,16 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
                 _ => Err(ParseError::InvalidReset),
             }
         }
+        "tab" => {
+            let (tab_name, rem) = parse_str_command(tokens)?;
+            match tab_name {
+                ResetArg::Explicit(name) => Ok((Node::Command(Command::Tab(name)), pop_spaces(rem))),
+                _ => Err(ParseError::InvalidReset),
+            }
+        }
+        "next_tab" => Ok((Node::Command(Command::NextTab), pop_spaces(&tokens[1..]))),
+        "previous_tab" => Ok((Node::Command(Command::PreviousTab), pop_spaces(&tokens[1..]))),
+        "quit_tabs" => Ok((Node::Command(Command::QuitTabs), pop_spaces(&tokens[1..]))),
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -599,7 +613,8 @@ fn parse_define_tab_command(tokens: &[Token]) -> Result<(Tab, &[Token]), ParseEr
             let direction = options
                 .vars
                 .get("direction")
-                .map(|q| TabDirection::from_str(q).unwrap()).unwrap();
+                .map(|q| TabDirection::from_str(q).unwrap())
+                .unwrap();
 
             // Enable quad filling by default
             let quad = match options.vars.get("quad") {
@@ -1549,6 +1564,41 @@ Hello world!";
         let parsed = parse_tokens(&lex(input))?;
 
         assert_eq!(expected.config.tabs, parsed.config.tabs);
+
+        Ok(())
+    }
+
+    #[test]
+    fn using_tabs_with_spaces() -> Result<(), ParseError> {
+        let input = ".define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[5P]
+}[test1]
+.define_tab{
+    .indent[7P]
+    .direction[left]
+    .length[5P]
+}[test2]
+.tab_list{
+    .1[test1]
+    .2[test2]
+}[test]
+.start
+.load_tabs[test]
+.tab[test1] Hello world! .next_tab Test sentence.";
+
+        let parsed = parse_tokens(&lex(input))?;
+
+        let expected = vec![Node::Paragraph(vec![
+            StyleBlock::Comm(Command::LoadTabs("test".to_string())),
+            StyleBlock::Comm(Command::Tab("test1".to_string())),
+            words_to_text_sp(&["Hello", "world!"]),
+            StyleBlock::Comm(Command::NextTab),
+            words_to_text(&["Test", "sentence."]),
+        ])];
+
+        assert_eq!(expected, parsed.nodes);
 
         Ok(())
     }

@@ -1,3 +1,4 @@
+; Building Mom's tab example in Burro
 .define_tab{
     .indent[0P]
     .direction[left]
@@ -9,9 +10,9 @@
     .length[9P]
 }[evaluation]
 .define_tab{
-    .indent[19P]
-    .quad[left]
-    .length[17P]
+    .indent[18P]
+    .direction[left]
+    .length[15P]
 }[comments]
 .tab_list{
     .1[criterion]
@@ -21,8 +22,14 @@
 
 .start
 .load_tabs[eval]
-; .tab[criterion] CRITERION .tab_next EVALUATION .tab_next COMMENTS
-; 
-; .tab[criterion] Service .tab_next Good .tab_next Many clients specifically request support from Joe by name.
-;
-; .tab_quit
+.tab[criterion] CRITERION .next_tab EVALUATION .next_tab COMMENTS
+
+; This is contrived, but it demonstrates .previous_tab
+; Obviously no one would ever do this in a real document
+.tab[criterion] Service/Hospitality .tab[comments] .previous_tab Good .next_tab Many clients specifically request support from Joe by name.
+
+.tab[criterion] Punctuality .next_tab Satisfactory .next_tab Tends to arrive after 8:00 a\.m., but often works through lunch hour.
+
+.tab[criterion] Team spirit .next_tab Needs work .next_tab Persistently giving higher priority to helping clients than respecting organizational hierarchy.
+
+.quit_tabs

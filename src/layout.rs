@@ -12,7 +12,7 @@ use crate::fonts::Font;
 use crate::literals;
 use crate::parser;
 use crate::parser::{Command, DocConfig, Document, Node, ResetArg, StyleBlock, TextUnit};
-use crate::tab::Tab;
+use crate::tab::{Tab, TabDirection};
 use crate::util::OrdFloat;
 
 #[derive(Debug, PartialEq)]
@@ -231,9 +231,11 @@ pub struct LayoutBuilder<'a> {
     column_gutter: f64,
     column_top: f64,
     column_bottom: f64,
-    current_tabs: Option<Vec<Tab>>,
-    _current_tab: Option<usize>,
+    current_tabs: Option<Vec<Rc<Tab>>>,
+    current_tab_ix: Option<usize>,
+    current_tab: Option<Rc<Tab>>,
     tab_lists: HashMap<String, Vec<Rc<Tab>>>,
+    tab_top: Option<f64>,
 }
 
 fn load_font_data<'a>(
@@ -349,9 +351,11 @@ impl<'a> LayoutBuilder<'a> {
             column_bottom: cursor.y,
             params,
             cursor,
-            _current_tab: None,
+            current_tab_ix: None,
+            current_tab: None,
             current_tabs: None,
             tab_lists: HashMap::new(),
+            tab_top: None,
         })
     }
 
@@ -778,12 +782,105 @@ impl<'a> LayoutBuilder<'a> {
             Command::TabList(..) => {
                 return Err(BurroError::TabListInBody);
             }
-            Command::LoadTabs(_name) => {
-                // TODO!
+            Command::LoadTabs(name) => {
+                let tabs = match self.tab_lists.get(name.as_str()) {
+                    Some(list) => list.clone(),
+                    // TODO: return an error saying no such tab exists
+                    None => todo!(),
+                };
+
+                self.current_tab_ix = Some(0);
+                self.current_tab = Some(tabs[0].clone());
+                self.current_tabs = Some(tabs);
+            }
+            Command::Tab(name) => {
+                self.emit_remaining_line();
+                if let Some(tabs) = &self.current_tabs {
+                    // TODO: I guess we should assert that the tab names are all unique somewhere
+                    // Also, obviously get rid of all of these unwraps
+                    let tab_ix = tabs
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, t)| {
+                            if t.name.as_ref().unwrap() == name {
+                                Some(ix)
+                            } else {
+                                None
+                            }
+                        })
+                        .nth(0)
+                        .unwrap();
+                    self.current_tab_ix = Some(tab_ix);
+
+                    if self.tab_top.is_none() {
+                        self.tab_top = Some(self.cursor.y);
+                    }
+
+                    self.load_tab(tabs[tab_ix].clone());
+                } else {
+                    // TODO: return an error saying that they need to load a tab list first
+                    todo!()
+                }
+            }
+            Command::NextTab => {
+                self.emit_remaining_line();
+                if let Some(current_ix) = self.current_tab_ix {
+                    let tabs = self.current_tabs.as_ref().unwrap();
+                    let new_ix = current_ix + 1;
+                    if new_ix >= tabs.len() {
+                        todo!()
+                    }
+
+                    self.current_tab_ix = Some(new_ix);
+                    self.load_tab(tabs[new_ix].clone());
+                } else {
+                    todo!()
+                }
+            }
+            Command::PreviousTab => {
+                self.emit_remaining_line();
+                if let Some(current_ix) = self.current_tab_ix {
+                    let tabs = self.current_tabs.as_ref().unwrap();
+                    if current_ix > 0 {
+                        let new_ix = current_ix - 1;
+                        self.current_tab_ix = Some(new_ix);
+                        self.load_tab(tabs[new_ix].clone());
+                    } else {
+                        todo!()
+                    }
+                } else {
+                    todo!()
+                }
+            }
+            Command::QuitTabs => {
+                // big TODO
             }
         }
 
         Ok(())
+    }
+
+    fn load_tab(&mut self, tab: Rc<Tab>) {
+        // TODO: ugh, handline tabs within columns
+        // I'm actually not totally convinced that'll matter?
+        // At the very least, I guess it will for exiting tabs
+        // and making sure the margins are properly reset
+        self.params.col_margin_left = self.params.page_margin_left + tab.indent;
+        self.cursor.x = self.params.col_margin_left;
+
+        if let Some(y) = self.tab_top {
+            self.cursor.y = y;
+        }
+
+        self.params.alignment = match tab.direction {
+            // TODO: replace TabDirection with Alignment (which will allow justification)
+            TabDirection::Left => Alignment::Left,
+            TabDirection::Right => Alignment::Right,
+            TabDirection::Center => Alignment::Center,
+        };
+
+        self.column_width = tab.length;
+        self.current_tab = Some(tab);
     }
 
     pub fn move_to_next_page(&mut self) {
@@ -842,6 +939,7 @@ impl<'a> LayoutBuilder<'a> {
         self.cursor.x = self.params.col_margin_left;
 
         self.advance_y_cursor(self.params.leading + self.params.pt_size + self.params.par_space);
+        self.tab_top = None;
 
         self.par_counter += 1;
 
@@ -892,7 +990,7 @@ impl<'a> LayoutBuilder<'a> {
                             > self.column_width
                         {
                             let mut last_words = self.pop_words(&mut current_line);
-                            if last_words.len() > 1 {
+                            if last_words.len() > 1 && current_line.len() > 0 {
                                 // This condition means we have a non-breaking space
                                 // If we have a non-breaking space joining words,
                                 // we don't try to hyphenate within that block
@@ -902,6 +1000,17 @@ impl<'a> LayoutBuilder<'a> {
                                 self.cursor.x = self.params.col_margin_left;
                                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
                                 self.hyphens = 0;
+                                continue;
+                            } else if current_line.len() == 0 && last_words.len() > 0 {
+                                // As far as I can tell, this only happens when there's a tab stop
+                                // with a word longer than the width of the stop.
+                                debug_assert!(self.current_tab.is_some());
+                                log::warn!("emitting word longer than tab length");
+                                self.emit_line(last_words, false);
+                                continue;
+                            }
+
+                            if last_words.iter().all(|w| w.is_space()) {
                                 continue;
                             }
 
@@ -1038,8 +1147,12 @@ impl<'a> LayoutBuilder<'a> {
             if *word.contents != TextUnit::Space {
                 result.insert(0, word);
             } else {
-                line.push(word);
-                break;
+                // Mid-line commands (such as tab stops) can have a space after a word,
+                // so we need to make sure we're not returning an empty result.
+                if result.len() > 0 {
+                    line.push(word);
+                    break;
+                }
             }
         }
 
