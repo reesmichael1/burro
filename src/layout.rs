@@ -215,6 +215,7 @@ pub struct LayoutBuilder<'a> {
     current_tabs: Option<Vec<Rc<Tab>>>,
     current_tab_ix: Option<usize>,
     current_tab: Option<Rc<Tab>>,
+    pre_tab_config: Option<(f64, f64, Alignment)>,
     tab_lists: HashMap<String, Vec<Rc<Tab>>>,
     tab_top: Option<f64>,
 }
@@ -335,6 +336,7 @@ impl<'a> LayoutBuilder<'a> {
             current_tab_ix: None,
             current_tab: None,
             current_tabs: None,
+            pre_tab_config: None,
             tab_lists: HashMap::new(),
             tab_top: None,
         })
@@ -769,6 +771,15 @@ impl<'a> LayoutBuilder<'a> {
                     None => return Err(BurroError::UndefinedTab(name.to_string())),
                 };
 
+                // It's important to note in the documentation that .quit_tabs will reset the
+                // margins to the values before .load_tabs, so that if a user edits the margins
+                // after .load_tabs for some reason, they might encounter surprising results.
+                self.pre_tab_config = Some((
+                    self.params.col_margin_left,
+                    self.params.col_margin_right,
+                    self.params.alignment,
+                ));
+
                 self.current_tab_ix = Some(0);
                 self.current_tab = Some(tabs[0].clone());
                 self.current_tabs = Some(tabs);
@@ -776,7 +787,6 @@ impl<'a> LayoutBuilder<'a> {
             Command::Tab(name) => {
                 self.emit_remaining_line();
                 if let Some(tabs) = &self.current_tabs {
-                    // TODO: I guess we should assert that the tab names are all unique somewhere
                     // TODO: get rid of all of these unwraps
                     let tab_ix = tabs
                         .iter()
@@ -832,7 +842,24 @@ impl<'a> LayoutBuilder<'a> {
                 }
             }
             Command::QuitTabs => {
-                // big TODO
+                if let Some((col_left, col_right, align)) = self.pre_tab_config {
+                    self.params.col_margin_left = col_left;
+                    self.params.col_margin_right = col_right;
+                    self.params.alignment = align;
+
+                    self.pre_tab_config = None;
+                    self.current_tab = None;
+                    self.current_tab_ix = None;
+                    self.current_tabs = None;
+
+                    let available_width = self.params.page_width
+                        - self.params.page_margin_left
+                        - self.params.page_margin_right;
+                    let total_gutter = self.column_gutter * (self.column_count - 1) as f64;
+                    self.column_width = (available_width - total_gutter) / self.column_count as f64;
+                } else {
+                    return Err(BurroError::NoTabsLoaded);
+                }
             }
         }
 
