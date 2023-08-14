@@ -777,7 +777,7 @@ impl<'a> LayoutBuilder<'a> {
                 self.emit_remaining_line();
                 if let Some(tabs) = &self.current_tabs {
                     // TODO: I guess we should assert that the tab names are all unique somewhere
-                    // Also, obviously get rid of all of these unwraps
+                    // TODO: get rid of all of these unwraps
                     let tab_ix = tabs
                         .iter()
                         .enumerate()

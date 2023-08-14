@@ -196,15 +196,19 @@ impl DocConfig {
         self
     }
 
-    fn add_tab(mut self, tab: Tab) -> Self {
+    fn add_tab(mut self, tab: Tab) -> Result<Self, ParseError> {
         let mut tab = tab;
 
         if tab.name.is_none() {
             tab.name = Some(format!("{}", self.tabs.len() + 1));
         }
 
+        if self.tabs.iter().any(|t| t.name == tab.name) {
+            return Err(ParseError::DuplicateTab(tab.name.expect("all tab names should be set").clone()));
+        }
+
         self.tabs.push(tab);
-        self
+        Ok(self)
     }
 
     fn add_tab_list(mut self, list: Vec<String>, name: String) -> Self {
@@ -279,6 +283,8 @@ pub enum ParseError {
     InvalidTabDirection,
     #[error("bad tab list syntax")]
     MalformedTabList,
+    #[error("repeated tab definition for '{0}'")]
+    DuplicateTab(String),
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -884,7 +890,7 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                             config = config.with_pt_size(size);
                         }
                         Node::Command(Command::DefineTab(tab)) => {
-                            config = config.add_tab(tab);
+                            config = config.add_tab(tab)?;
                         }
                         Node::Command(Command::TabList(list, name)) => {
                             config = config.add_tab_list(list, name);
@@ -1477,7 +1483,7 @@ Hello world!";
         };
 
         let expected = Document {
-            config: DocConfig::build().add_tab(tab),
+            config: DocConfig::build().add_tab(tab)?,
             nodes: vec![],
         };
 
@@ -1507,7 +1513,7 @@ Hello world!";
         };
 
         let expected = Document {
-            config: DocConfig::build().add_tab(tab),
+            config: DocConfig::build().add_tab(tab)?,
             nodes: vec![],
         };
 
@@ -1550,7 +1556,7 @@ Hello world!";
         };
 
         let expected = Document {
-            config: DocConfig::build().add_tab(tab1).add_tab(tab2),
+            config: DocConfig::build().add_tab(tab1)?.add_tab(tab2)?,
             nodes: vec![],
         };
 
