@@ -785,8 +785,7 @@ impl<'a> LayoutBuilder<'a> {
             Command::LoadTabs(name) => {
                 let tabs = match self.tab_lists.get(name.as_str()) {
                     Some(list) => list.clone(),
-                    // TODO: return an error saying no such tab exists
-                    None => todo!(),
+                    None => return Err(BurroError::UndefinedTab(name.to_string())),
                 };
 
                 self.current_tab_ix = Some(0);
@@ -818,8 +817,7 @@ impl<'a> LayoutBuilder<'a> {
 
                     self.load_tab(tabs[tab_ix].clone());
                 } else {
-                    // TODO: return an error saying that they need to load a tab list first
-                    todo!()
+                    return Err(BurroError::NoTabsLoaded);
                 }
             }
             Command::NextTab => {
@@ -828,13 +826,13 @@ impl<'a> LayoutBuilder<'a> {
                     let tabs = self.current_tabs.as_ref().unwrap();
                     let new_ix = current_ix + 1;
                     if new_ix >= tabs.len() {
-                        todo!()
+                        return Err(BurroError::TabOutOfRange);
                     }
 
                     self.current_tab_ix = Some(new_ix);
                     self.load_tab(tabs[new_ix].clone());
                 } else {
-                    todo!()
+                    return Err(BurroError::NoTabsLoaded);
                 }
             }
             Command::PreviousTab => {
@@ -846,10 +844,10 @@ impl<'a> LayoutBuilder<'a> {
                         self.current_tab_ix = Some(new_ix);
                         self.load_tab(tabs[new_ix].clone());
                     } else {
-                        todo!()
+                        return Err(BurroError::TabOutOfRange);
                     }
                 } else {
-                    todo!()
+                    return Err(BurroError::NoTabsLoaded);
                 }
             }
             Command::QuitTabs => {
@@ -861,7 +859,7 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn load_tab(&mut self, tab: Rc<Tab>) {
-        // TODO: ugh, handline tabs within columns
+        // TODO: ugh, handling tabs within columns
         // I'm actually not totally convinced that'll matter?
         // At the very least, I guess it will for exiting tabs
         // and making sure the margins are properly reset

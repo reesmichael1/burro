@@ -32,4 +32,8 @@ pub enum BurroError {
     TabListInBody,
     #[error("tried to reference tab '{0}' that was not defined")]
     UndefinedTab(String),
+    #[error("tried to use tab command without a loaded tab list")]
+    NoTabsLoaded,
+    #[error("tried to cycle to tab outside of valid range")]
+    TabOutOfRange,
 }
