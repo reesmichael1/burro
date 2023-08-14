@@ -6,13 +6,13 @@ use hyphenation::*;
 use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
+use crate::alignment::Alignment;
 use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::literals;
-use crate::parser;
 use crate::parser::{Command, DocConfig, Document, Node, ResetArg, StyleBlock, TextUnit};
-use crate::tab::{Tab, TabDirection};
+use crate::tab::Tab;
 use crate::util::OrdFloat;
 
 #[derive(Debug, PartialEq)]
@@ -82,25 +82,6 @@ impl UpdateRelative for u64 {
 // which excludes fonts or strings.
 impl UpdateRelative for Font {}
 impl UpdateRelative for String {}
-
-#[derive(Debug, PartialEq)]
-enum Alignment {
-    Left,
-    Right,
-    Center,
-    Justify,
-}
-
-impl From<&parser::Alignment> for Alignment {
-    fn from(other: &parser::Alignment) -> Self {
-        match other {
-            parser::Alignment::Left => Self::Left,
-            parser::Alignment::Center => Self::Center,
-            parser::Alignment::Right => Self::Right,
-            parser::Alignment::Justify => Self::Justify,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 struct Word {
@@ -449,7 +430,7 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         if let Some(alignment) = &config.alignment {
-            self.params.alignment = alignment.into();
+            self.params.alignment = *alignment;
         }
 
         self.indent_first = config.indent_first;
@@ -509,7 +490,7 @@ impl<'a> LayoutBuilder<'a> {
     fn handle_command(&mut self, c: &'a Command) -> Result<(), BurroError> {
         match c {
             Command::Align(arg) => match arg {
-                ResetArg::Explicit(dir) => self.set_alignment(dir.into()),
+                ResetArg::Explicit(dir) => self.set_alignment(*dir),
                 ResetArg::Reset => {
                     if let Some(alignment) = self.alignments.pop() {
                         self.params.alignment = alignment;
@@ -870,13 +851,7 @@ impl<'a> LayoutBuilder<'a> {
             self.cursor.y = y;
         }
 
-        self.params.alignment = match tab.direction {
-            // TODO: replace TabDirection with Alignment (which will allow justification)
-            TabDirection::Left => Alignment::Left,
-            TabDirection::Right => Alignment::Right,
-            TabDirection::Center => Alignment::Center,
-        };
-
+        self.params.alignment = tab.direction;
         self.column_width = tab.length;
         self.current_tab = Some(tab);
     }

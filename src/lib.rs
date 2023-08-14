@@ -1,3 +1,4 @@
+mod alignment;
 pub mod error;
 mod fontmap;
 mod fonts;

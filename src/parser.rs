@@ -5,18 +5,11 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use thiserror::Error;
 
+use crate::alignment::Alignment;
 use crate::fonts::Font;
 use crate::lexer::Token;
 use crate::literals;
-use crate::tab::{Tab, TabDirection};
-
-#[derive(Debug, PartialEq)]
-pub enum Alignment {
-    Left,
-    Center,
-    Right,
-    Justify,
-}
+use crate::tab::Tab;
 
 const DEFAULT_COL_GUTTER: f64 = 20.0;
 
@@ -461,12 +454,17 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
         "tab" => {
             let (tab_name, rem) = parse_str_command(tokens)?;
             match tab_name {
-                ResetArg::Explicit(name) => Ok((Node::Command(Command::Tab(name)), pop_spaces(rem))),
+                ResetArg::Explicit(name) => {
+                    Ok((Node::Command(Command::Tab(name)), pop_spaces(rem)))
+                }
                 _ => Err(ParseError::InvalidReset),
             }
         }
         "next_tab" => Ok((Node::Command(Command::NextTab), pop_spaces(&tokens[1..]))),
-        "previous_tab" => Ok((Node::Command(Command::PreviousTab), pop_spaces(&tokens[1..]))),
+        "previous_tab" => Ok((
+            Node::Command(Command::PreviousTab),
+            pop_spaces(&tokens[1..]),
+        )),
         "quit_tabs" => Ok((Node::Command(Command::QuitTabs), pop_spaces(&tokens[1..]))),
         _ => Err(ParseError::UnknownCommand(name)),
     }
@@ -505,15 +503,10 @@ fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseErr
         return Err(ParseError::MalformedAlign);
     }
     match &tokens[1..] {
-        [Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] => {
-            match align.as_ref() {
-                "left" => Ok((Command::Align(ResetArg::Explicit(Alignment::Left)), rest)),
-                "right" => Ok((Command::Align(ResetArg::Explicit(Alignment::Right)), rest)),
-                "center" => Ok((Command::Align(ResetArg::Explicit(Alignment::Center)), rest)),
-                "justify" => Ok((Command::Align(ResetArg::Explicit(Alignment::Justify)), rest)),
-                _ => Err(ParseError::InvalidAlign(align.to_string())),
-            }
-        }
+        [Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] => Ok((
+            Command::Align(ResetArg::Explicit(Alignment::from_str(align.as_ref())?)),
+            rest,
+        )),
         [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
             Ok((Command::Align(ResetArg::Reset), rest))
         }
@@ -613,7 +606,7 @@ fn parse_define_tab_command(tokens: &[Token]) -> Result<(Tab, &[Token]), ParseEr
             let direction = options
                 .vars
                 .get("direction")
-                .map(|q| TabDirection::from_str(q).unwrap())
+                .map(|q| Alignment::from_str(q).unwrap())
                 .unwrap();
 
             // Enable quad filling by default
@@ -1477,7 +1470,7 @@ Hello world!";
 
         let tab = Tab {
             indent: 0.0,
-            direction: TabDirection::Left,
+            direction: Alignment::Left,
             length: 60.0,
             quad: true,
             name: Some("test1".to_string()),
@@ -1507,7 +1500,7 @@ Hello world!";
 
         let tab = Tab {
             indent: 0.0,
-            direction: TabDirection::Right,
+            direction: Alignment::Right,
             length: 36.0,
             quad: false,
             name: Some("test1".to_string()),
@@ -1542,7 +1535,7 @@ Hello world!";
 
         let tab1 = Tab {
             indent: 0.0,
-            direction: TabDirection::Left,
+            direction: Alignment::Left,
             length: 36.0,
             quad: true,
             name: Some("1".to_string()),
@@ -1550,7 +1543,7 @@ Hello world!";
 
         let tab2 = Tab {
             indent: 48.0,
-            direction: TabDirection::Right,
+            direction: Alignment::Right,
             length: 96.0,
             quad: true,
             name: Some("2".to_string()),
