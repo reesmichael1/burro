@@ -888,7 +888,14 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         self.params.alignment = tab.direction;
-        self.column_width = tab.length;
+        if tab.quad {
+            self.column_width = tab.length;
+        } else {
+            self.column_width = self.params.page_width
+                - self.params.col_margin_right
+                - self.params.page_margin_left
+                - tab.indent;
+        }
         self.current_tab = Some(tab);
     }
 

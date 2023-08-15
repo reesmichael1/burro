@@ -20,6 +20,22 @@
     .3[comments]
 }[eval]
 
+.define_tab{
+    .indent[5P]
+    .length[20P]
+    .direction[justify]
+    .quad[false]
+}[overflow]
+.define_tab{
+    .indent[25P]
+    .length[5P]
+    .direction[left]
+}[other]
+.tab_list{
+    .1[overflow]
+    .2[other]
+}[quad-demo]
+
 .start
 Here's some text to demonstrate the alignment settings before entering some tabs. Note that the paragraph is justified, and that the margins are set to one inch all around (as are the usual default settings in Burro).
 
@@ -37,3 +53,10 @@ Below, we're going to load an employee evaluation form. This layout and content 
 .tab[criterion] Team spirit .next_tab Needs work .next_tab Persistently giving higher priority to helping clients than respecting organizational hierarchy. .quit_tabs
 
 Now, after calling \.quit_tabs, we're back to writing a normal paragraph. There shouldn't be any surprises here---it's like we never entered the tab environment in the first place. Notice how our text is still justified and the margins are aligned as they were before entering the tabs. Setting tabs in Burro is very nice!
+
+.load_tabs[quad-demo]
+.tab[other]
+Other tab
+
+.tab[overflow] Here are a lot of words that overflow the 20 pica length set for this tab (a 20 pica length is shown by ``Other tab'' above). See how we continue on the same line? That's because \.quad\[false\] is set for this tab.
+.quit_tabs
