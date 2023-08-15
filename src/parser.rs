@@ -204,7 +204,9 @@ impl DocConfig {
         }
 
         if self.tabs.iter().any(|t| t.name == tab.name) {
-            return Err(ParseError::DuplicateTab(tab.name.expect("all tab names should be set").clone()));
+            return Err(ParseError::DuplicateTab(
+                tab.name.expect("all tab names should be set").clone(),
+            ));
         }
 
         self.tabs.push(tab);
@@ -602,18 +604,20 @@ fn parse_define_tab_command(tokens: &[Token]) -> Result<(Tab, &[Token]), ParseEr
             )?
             .value()?;
 
-            // TODO: don't use unwrap here
-            let length = options
-                .vars
-                .get("length")
-                .map(|l| parse_unit(l).unwrap())
-                .map(|rv| rv.value().unwrap())
-                .unwrap();
-            let direction = options
-                .vars
-                .get("direction")
-                .map(|q| Alignment::from_str(q).unwrap())
-                .unwrap();
+            let length = parse_unit(
+                options
+                    .vars
+                    .get("length")
+                    .ok_or(ParseError::MalformedDefineTab)?,
+            )?
+            .value()?;
+
+            let direction = Alignment::from_str(
+                options
+                    .vars
+                    .get("direction")
+                    .ok_or(ParseError::MalformedDefineTab)?,
+            )?;
 
             // Enable quad filling by default
             let quad = match options.vars.get("quad") {
@@ -666,7 +670,9 @@ fn parse_columns_command(tokens: &[Token]) -> Result<(ColumnOptions, &[Token]), 
                 match rest {
                     [Token::CloseBrace, Token::OpenSquare, Token::Word(count), Token::CloseSquare, rem @ ..] =>
                     {
-                        options.count = count.parse::<u32>().unwrap();
+                        options.count = count
+                            .parse::<u32>()
+                            .map_err(|_| ParseError::MalformedColumns)?;
                         return Ok((options, rem));
                     }
                     _ => next_tokens = rest,

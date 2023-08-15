@@ -787,19 +787,22 @@ impl<'a> LayoutBuilder<'a> {
             Command::Tab(name) => {
                 self.emit_remaining_line();
                 if let Some(tabs) = &self.current_tabs {
-                    // TODO: get rid of all of these unwraps
-                    let tab_ix = tabs
+                    let tab_ix = match tabs
                         .iter()
                         .enumerate()
                         .filter_map(|(ix, t)| {
-                            if t.name.as_ref().unwrap() == name {
+                            // We've asserted earlier that all of the tab names are unique
+                            if t.name.as_ref() == Some(name) {
                                 Some(ix)
                             } else {
                                 None
                             }
                         })
                         .nth(0)
-                        .unwrap();
+                    {
+                        Some(ix) => ix,
+                        None => return Err(BurroError::UnloadedTab(name.clone())),
+                    };
                     self.current_tab_ix = Some(tab_ix);
 
                     if self.tab_top.is_none() {
@@ -814,7 +817,10 @@ impl<'a> LayoutBuilder<'a> {
             Command::NextTab => {
                 self.emit_remaining_line();
                 if let Some(current_ix) = self.current_tab_ix {
-                    let tabs = self.current_tabs.as_ref().unwrap();
+                    let tabs = self
+                        .current_tabs
+                        .as_ref()
+                        .expect("current_tabs should be loaded if current_tab_ix is set");
                     let new_ix = current_ix + 1;
                     if new_ix >= tabs.len() {
                         return Err(BurroError::TabOutOfRange);
@@ -829,7 +835,10 @@ impl<'a> LayoutBuilder<'a> {
             Command::PreviousTab => {
                 self.emit_remaining_line();
                 if let Some(current_ix) = self.current_tab_ix {
-                    let tabs = self.current_tabs.as_ref().unwrap();
+                    let tabs = self
+                        .current_tabs
+                        .as_ref()
+                        .expect("current_tabs should be loaded if current_tab_ix is set");
                     if current_ix > 0 {
                         let new_ix = current_ix - 1;
                         self.current_tab_ix = Some(new_ix);

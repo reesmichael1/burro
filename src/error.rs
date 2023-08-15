@@ -36,4 +36,6 @@ pub enum BurroError {
     NoTabsLoaded,
     #[error("tried to cycle to tab outside of valid range")]
     TabOutOfRange,
+    #[error("tried to reference tab not in the current tab list")]
+    UnloadedTab(String),
 }
