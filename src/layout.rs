@@ -215,7 +215,7 @@ pub struct LayoutBuilder<'a> {
     current_tabs: Option<Vec<Rc<Tab>>>,
     current_tab_ix: Option<usize>,
     current_tab: Option<Rc<Tab>>,
-    pre_tab_config: Option<(f64, f64, Alignment)>,
+    pre_tab_config: Option<(f64, f64, f64, Alignment)>,
     tab_lists: HashMap<String, Vec<Rc<Tab>>>,
     tab_top: Option<f64>,
 }
@@ -777,6 +777,7 @@ impl<'a> LayoutBuilder<'a> {
                 self.pre_tab_config = Some((
                     self.params.col_margin_left,
                     self.params.col_margin_right,
+                    self.column_width,
                     self.params.alignment,
                 ));
 
@@ -851,21 +852,16 @@ impl<'a> LayoutBuilder<'a> {
                 }
             }
             Command::QuitTabs => {
-                if let Some((col_left, col_right, align)) = self.pre_tab_config {
+                if let Some((col_left, col_right, col_width, align)) = self.pre_tab_config {
                     self.params.col_margin_left = col_left;
                     self.params.col_margin_right = col_right;
                     self.params.alignment = align;
+                    self.column_width = col_width;
 
                     self.pre_tab_config = None;
                     self.current_tab = None;
                     self.current_tab_ix = None;
                     self.current_tabs = None;
-
-                    let available_width = self.params.page_width
-                        - self.params.page_margin_left
-                        - self.params.page_margin_right;
-                    let total_gutter = self.column_gutter * (self.column_count - 1) as f64;
-                    self.column_width = (available_width - total_gutter) / self.column_count as f64;
                 } else {
                     return Err(BurroError::NoTabsLoaded);
                 }
@@ -876,11 +872,15 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn load_tab(&mut self, tab: Rc<Tab>) {
-        // TODO: ugh, handling tabs within columns
-        // I'm actually not totally convinced that'll matter?
-        // At the very least, I guess it will for exiting tabs
-        // and making sure the margins are properly reset
-        self.params.col_margin_left = self.params.page_margin_left + tab.indent;
+        // If the user goes out of their way to break things by mixing tabs/columns
+        // in complicated ways, they'll certainly be able to do so.
+        // I'm not sure how much energy we'll spend trying to stop them.
+        // However, we will allow a sane user to use tabs within columns.
+
+        // Load the original left column margin so that we can keep moving it for each new tab.
+        let (col_left, _, col_width, _) =
+            self.pre_tab_config.expect("should have tabs loaded by now");
+        self.params.col_margin_left = col_left + tab.indent;
         self.cursor.x = self.params.col_margin_left;
 
         if let Some(y) = self.tab_top {
@@ -899,9 +899,7 @@ impl<'a> LayoutBuilder<'a> {
 
         // If the tab overflows the margin, then emit a warning
         // In the future, we might just not allow this to happen
-        if tab.length + self.params.col_margin_left
-            > self.params.page_width - self.params.col_margin_right
-        {
+        if self.column_width > col_width {
             log::warn!(
                 "tab {} overflowed page/column margins",
                 tab.name.as_ref().expect("tabs should all have names")
