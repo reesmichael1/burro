@@ -1,20 +1,15 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
 use regex::Regex;
 use thiserror::Error;
 
+use crate::alignment::Alignment;
 use crate::fonts::Font;
 use crate::lexer::Token;
 use crate::literals;
-
-#[derive(Debug, PartialEq)]
-pub enum Alignment {
-    Left,
-    Center,
-    Right,
-    Justify,
-}
+use crate::tab::Tab;
 
 const DEFAULT_COL_GUTTER: f64 = 20.0;
 
@@ -41,6 +36,13 @@ pub enum Command {
     HSpace(ResetArg<f64>),
     Rule(RuleOptions),
     Columns(ColumnOptions),
+    DefineTab(Tab),
+    TabList(Vec<String>, String),
+    LoadTabs(String),
+    Tab(String),
+    NextTab,
+    PreviousTab,
+    QuitTabs,
 }
 
 #[derive(Debug, PartialEq)]
@@ -115,6 +117,8 @@ pub struct DocConfig {
     pub alignment: Option<Alignment>,
     pub consecutive_hyphens: Option<u64>,
     pub letter_space: Option<f64>,
+    pub tabs: Vec<Tab>,
+    pub tab_lists: HashMap<String, Vec<String>>,
 }
 
 impl DocConfig {
@@ -191,6 +195,28 @@ impl DocConfig {
         self.letter_space = Some(letter_space);
         self
     }
+
+    fn add_tab(mut self, tab: Tab) -> Result<Self, ParseError> {
+        let mut tab = tab;
+
+        if tab.name.is_none() {
+            tab.name = Some(format!("{}", self.tabs.len() + 1));
+        }
+
+        if self.tabs.iter().any(|t| t.name == tab.name) {
+            return Err(ParseError::DuplicateTab(
+                tab.name.expect("all tab names should be set").clone(),
+            ));
+        }
+
+        self.tabs.push(tab);
+        Ok(self)
+    }
+
+    fn add_tab_list(mut self, list: Vec<String>, name: String) -> Self {
+        self.tab_lists.insert(name, list);
+        self
+    }
 }
 
 #[derive(Debug, Error)]
@@ -226,6 +252,8 @@ pub enum ParseError {
     #[error("invalid value {0} encountered when integer expected")]
     InvalidInt(String),
     #[error("invalid unit {0} encountered as measurement")]
+    InvalidBool(String),
+    #[error("invalid value {0} encountered when bool expected")]
     InvalidUnit(String),
     #[error("invalid command with string argument")]
     MalformedStrCommand,
@@ -247,12 +275,32 @@ pub enum ParseError {
     MalformedColumns,
     #[error("tried to use relative argument for an unsupported command")]
     InvalidRelative,
+    #[error("malformed define_tab command")]
+    MalformedDefineTab,
+    #[error("entered curly brace parser without curly brace")]
+    MissingCurlyBrace,
+    #[error("bad curly brace syntax")]
+    MalformedCurlyBrace,
+    #[error("invalid tab direction")]
+    InvalidTabDirection,
+    #[error("bad tab list syntax")]
+    MalformedTabList,
+    #[error("repeated tab definition for '{0}'")]
+    DuplicateTab(String),
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
     match tokens {
         [Token::Space, rest @ ..] => pop_spaces(rest),
         _ => tokens,
+    }
+}
+
+fn parse_bool_arg(val: &str) -> Result<bool, ParseError> {
+    match val {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(ParseError::InvalidBool(val.to_string())),
     }
 }
 
@@ -383,6 +431,49 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             Ok((Node::Command(Command::Columns(rule)), rem))
         }
         "column_break" => Ok((Node::Command(Command::ColumnBreak), &tokens[1..])),
+        "define_tab" => {
+            let (tab, rem) = parse_define_tab_command(tokens)?;
+            Ok((Node::Command(Command::DefineTab(tab)), rem))
+        }
+        "tab_list" => {
+            let (list, name, rem) = parse_tab_list_command(tokens)?;
+            let mut counter = 1;
+            let mut tabs = vec![];
+            loop {
+                if let Some(tab) = list.get(&counter) {
+                    tabs.push(tab.clone());
+                    counter += 1;
+                } else {
+                    break;
+                }
+            }
+
+            Ok((Node::Command(Command::TabList(tabs, name)), rem))
+        }
+        "load_tabs" => {
+            let (list_name, rem) = parse_str_command(tokens)?;
+            match list_name {
+                ResetArg::Explicit(name) => Ok((Node::Command(Command::LoadTabs(name)), rem)),
+                // This *should* never be a relative
+                // because parse_str_command only returns Explicit and Reset
+                _ => Err(ParseError::InvalidReset),
+            }
+        }
+        "tab" => {
+            let (tab_name, rem) = parse_str_command(tokens)?;
+            match tab_name {
+                ResetArg::Explicit(name) => {
+                    Ok((Node::Command(Command::Tab(name)), pop_spaces(rem)))
+                }
+                _ => Err(ParseError::InvalidReset),
+            }
+        }
+        "next_tab" => Ok((Node::Command(Command::NextTab), pop_spaces(&tokens[1..]))),
+        "previous_tab" => Ok((
+            Node::Command(Command::PreviousTab),
+            pop_spaces(&tokens[1..]),
+        )),
+        "quit_tabs" => Ok((Node::Command(Command::QuitTabs), pop_spaces(&tokens[1..]))),
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -420,19 +511,132 @@ fn parse_align_command(tokens: &[Token]) -> Result<(Command, &[Token]), ParseErr
         return Err(ParseError::MalformedAlign);
     }
     match &tokens[1..] {
-        [Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] => {
-            match align.as_ref() {
-                "left" => Ok((Command::Align(ResetArg::Explicit(Alignment::Left)), rest)),
-                "right" => Ok((Command::Align(ResetArg::Explicit(Alignment::Right)), rest)),
-                "center" => Ok((Command::Align(ResetArg::Explicit(Alignment::Center)), rest)),
-                "justify" => Ok((Command::Align(ResetArg::Explicit(Alignment::Justify)), rest)),
-                _ => Err(ParseError::InvalidAlign(align.to_string())),
-            }
-        }
+        [Token::OpenSquare, Token::Word(align), Token::CloseSquare, rest @ ..] => Ok((
+            Command::Align(ResetArg::Explicit(Alignment::from_str(align.as_ref())?)),
+            rest,
+        )),
         [Token::OpenSquare, Token::Reset, Token::CloseSquare, rest @ ..] => {
             Ok((Command::Align(ResetArg::Reset), rest))
         }
         _ => Err(ParseError::MalformedAlign),
+    }
+}
+
+#[derive(Debug)]
+struct CurlyBraceData {
+    vars: HashMap<String, String>,
+    command: Option<String>,
+}
+
+impl CurlyBraceData {
+    fn new(vars: HashMap<String, String>, command: Option<String>) -> Self {
+        Self { vars, command }
+    }
+}
+
+fn parse_curly_brace_syntax(tokens: &[Token]) -> Result<(CurlyBraceData, &[Token]), ParseError> {
+    match tokens {
+        [Token::OpenBrace, rest @ ..] => {
+            let mut rest = rest;
+            let mut result = HashMap::new();
+            while rest[0..=1] != [Token::Newline, Token::CloseBrace] {
+                match rest {
+                    [Token::Newline, Token::Space, Token::Command(var), Token::OpenSquare, Token::Word(def), Token::CloseSquare, rem @ ..] =>
+                    {
+                        result.insert(var.clone(), def.clone());
+                        rest = rem;
+                    }
+                    _ => return Err(ParseError::MalformedCurlyBrace),
+                }
+            }
+
+            match rest {
+                [Token::Newline, Token::CloseBrace, Token::OpenSquare, Token::Word(comm), Token::CloseSquare, rest @ ..] => {
+                    Ok((CurlyBraceData::new(result, Some(comm.to_string())), rest))
+                }
+                [Token::Newline, Token::CloseBrace, Token::Newline, rest @ ..] => {
+                    Ok((CurlyBraceData::new(result, None), rest))
+                }
+                _ => Err(ParseError::MalformedCurlyBrace),
+            }
+        }
+        _ => Err(ParseError::MissingCurlyBrace),
+    }
+}
+
+fn parse_tab_list_command(
+    tokens: &[Token],
+) -> Result<(HashMap<usize, String>, String, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), rest @ ..] => {
+            let (options, rest) = parse_curly_brace_syntax(rest)?;
+
+            if let Some(name) = options.command {
+                let mut tabs = HashMap::new();
+                for (num, name) in options.vars {
+                    let num = match num.parse::<usize>() {
+                        Ok(num) => num,
+                        Err(_) => return Err(ParseError::MalformedTabList),
+                    };
+
+                    tabs.insert(num, name);
+                }
+
+                Ok((tabs, name, rest))
+            } else {
+                Err(ParseError::MalformedTabList)
+            }
+        }
+        _ => Err(ParseError::MalformedTabList),
+    }
+}
+
+fn parse_define_tab_command(tokens: &[Token]) -> Result<(Tab, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), rest @ ..] => {
+            let (options, rest) = parse_curly_brace_syntax(rest)?;
+
+            let indent = parse_unit(
+                &options
+                    .vars
+                    .get("indent")
+                    .ok_or(ParseError::MalformedDefineTab)?,
+            )?
+            .value()?;
+
+            let length = parse_unit(
+                options
+                    .vars
+                    .get("length")
+                    .ok_or(ParseError::MalformedDefineTab)?,
+            )?
+            .value()?;
+
+            let direction = Alignment::from_str(
+                options
+                    .vars
+                    .get("direction")
+                    .ok_or(ParseError::MalformedDefineTab)?,
+            )?;
+
+            // Enable quad filling by default
+            let quad = match options.vars.get("quad") {
+                Some(val) => parse_bool_arg(val)?,
+                None => true,
+            };
+
+            Ok((
+                Tab {
+                    indent,
+                    length,
+                    quad,
+                    name: options.command,
+                    direction,
+                },
+                rest,
+            ))
+        }
+        _ => Err(ParseError::MalformedDefineTab),
     }
 }
 
@@ -466,7 +670,9 @@ fn parse_columns_command(tokens: &[Token]) -> Result<(ColumnOptions, &[Token]), 
                 match rest {
                     [Token::CloseBrace, Token::OpenSquare, Token::Word(count), Token::CloseSquare, rem @ ..] =>
                     {
-                        options.count = count.parse::<u32>().unwrap();
+                        options.count = count
+                            .parse::<u32>()
+                            .map_err(|_| ParseError::MalformedColumns)?;
                         return Ok((options, rem));
                     }
                     _ => next_tokens = rest,
@@ -689,6 +895,12 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         Node::Command(Command::PtSize(ResetArg::Explicit(size))) => {
                             config = config.with_pt_size(size);
                         }
+                        Node::Command(Command::DefineTab(tab)) => {
+                            config = config.add_tab(tab)?;
+                        }
+                        Node::Command(Command::TabList(list, name)) => {
+                            config = config.add_tab_list(list, name);
+                        }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }
 
@@ -702,7 +914,7 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
 }
 
 #[derive(Debug, PartialEq)]
-enum PointsVal {
+pub enum PointsVal {
     Static(f64),
     Relative(f64),
 }
@@ -1256,6 +1468,143 @@ Hello world!";
         };
 
         assert_eq!(expected, parse_tokens(&lex(input))?);
+        Ok(())
+    }
+
+    #[test]
+    fn tab_parsing_with_length() -> Result<(), ParseError> {
+        let input = ".define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[5P]
+}[test1]
+.start";
+
+        let tab = Tab {
+            indent: 0.0,
+            direction: Alignment::Left,
+            length: 60.0,
+            quad: true,
+            name: Some("test1".to_string()),
+        };
+
+        let expected = Document {
+            config: DocConfig::build().add_tab(tab)?,
+            nodes: vec![],
+        };
+
+        let parsed = parse_tokens(&lex(input))?;
+
+        assert_eq!(expected, parsed);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tab_parsing_with_quad() -> Result<(), ParseError> {
+        let input = ".define_tab{
+    .indent[0P]
+    .length[3P]
+    .direction[right]
+    .quad[false]
+}[test1]
+.start";
+
+        let tab = Tab {
+            indent: 0.0,
+            direction: Alignment::Right,
+            length: 36.0,
+            quad: false,
+            name: Some("test1".to_string()),
+        };
+
+        let expected = Document {
+            config: DocConfig::build().add_tab(tab)?,
+            nodes: vec![],
+        };
+
+        let parsed = parse_tokens(&lex(input))?;
+
+        assert_eq!(expected, parsed);
+
+        Ok(())
+    }
+
+    #[test]
+    fn tab_parsing_with_no_name() -> Result<(), ParseError> {
+        let input = ".define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[3P]
+}
+.define_tab{
+    .indent[4P]
+    .direction[right]
+    .length[8P]
+}
+
+.start";
+
+        let tab1 = Tab {
+            indent: 0.0,
+            direction: Alignment::Left,
+            length: 36.0,
+            quad: true,
+            name: Some("1".to_string()),
+        };
+
+        let tab2 = Tab {
+            indent: 48.0,
+            direction: Alignment::Right,
+            length: 96.0,
+            quad: true,
+            name: Some("2".to_string()),
+        };
+
+        let expected = Document {
+            config: DocConfig::build().add_tab(tab1)?.add_tab(tab2)?,
+            nodes: vec![],
+        };
+
+        let parsed = parse_tokens(&lex(input))?;
+
+        assert_eq!(expected.config.tabs, parsed.config.tabs);
+
+        Ok(())
+    }
+
+    #[test]
+    fn using_tabs_with_spaces() -> Result<(), ParseError> {
+        let input = ".define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[5P]
+}[test1]
+.define_tab{
+    .indent[7P]
+    .direction[left]
+    .length[5P]
+}[test2]
+.tab_list{
+    .1[test1]
+    .2[test2]
+}[test]
+.start
+.load_tabs[test]
+.tab[test1] Hello world! .next_tab Test sentence.";
+
+        let parsed = parse_tokens(&lex(input))?;
+
+        let expected = vec![Node::Paragraph(vec![
+            StyleBlock::Comm(Command::LoadTabs("test".to_string())),
+            StyleBlock::Comm(Command::Tab("test1".to_string())),
+            words_to_text_sp(&["Hello", "world!"]),
+            StyleBlock::Comm(Command::NextTab),
+            words_to_text(&["Test", "sentence."]),
+        ])];
+
+        assert_eq!(expected, parsed.nodes);
+
         Ok(())
     }
 }

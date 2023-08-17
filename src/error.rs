@@ -26,4 +26,16 @@ pub enum BurroError {
     EmptyReset,
     #[error("tried to use relative argument for an unsupported command")]
     InvalidRelative,
+    #[error("encountered tab definition in document body")]
+    TabDefInBody,
+    #[error("encountered tab list in document body")]
+    TabListInBody,
+    #[error("tried to reference tab '{0}' that was not defined")]
+    UndefinedTab(String),
+    #[error("tried to use tab command without a loaded tab list")]
+    NoTabsLoaded,
+    #[error("tried to cycle to tab outside of valid range")]
+    TabOutOfRange,
+    #[error("tried to reference tab not in the current tab list")]
+    UnloadedTab(String),
 }

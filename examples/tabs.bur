@@ -1,0 +1,76 @@
+; Building Mom's tab example in Burro
+.define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[5P]
+}[criterion]
+.define_tab{
+    .indent[8P]
+    .direction[center]
+    .length[9P]
+}[evaluation]
+.define_tab{
+    .indent[18P]
+    .direction[left]
+    .length[15P]
+}[comments]
+.tab_list{
+    .1[criterion]
+    .2[evaluation]
+    .3[comments]
+}[eval]
+
+.define_tab{
+    .indent[5P]
+    .length[20P]
+    .direction[justify]
+    .quad[false]
+}[overflow]
+.define_tab{
+    .indent[25P]
+    .length[5P]
+    .direction[left]
+}[other]
+.tab_list{
+    .1[overflow]
+    .2[other]
+}[quad-demo]
+
+.define_tab{
+; only indent 5in because the indent is relative to the margin
+    .indent[5in]
+    .length[2.25in]
+    .direction[justify]
+}[too-long]
+.tab_list{
+    .1[too-long]
+}[too-long-demo]
+
+.start
+Here's some text to demonstrate the alignment settings before entering some tabs. Note that the paragraph is justified, and that the margins are set to one inch all around (as are the usual default settings in Burro).
+
+Below, we're going to load an employee evaluation form. This layout and content is taken from Mom's documentation, under the ``Typesetting tabs'' section.
+
+.load_tabs[eval]
+.tab[criterion] CRITERION .next_tab EVALUATION .next_tab COMMENTS
+
+; This is contrived, but it demonstrates .previous_tab
+; Obviously no one would ever do this in a real document
+.tab[criterion] Service .tab[comments] .previous_tab Good .next_tab Many clients specifically request support from Joe by name.
+
+.tab[criterion] Punctuality .next_tab Satisfactory .next_tab Tends to arrive after 8:00 a\.m., but often works through lunch hour.
+
+.tab[criterion] Team spirit .next_tab Needs work .next_tab Persistently giving higher priority to helping clients than respecting organizational hierarchy. .quit_tabs
+
+Now, after calling \.quit_tabs, we're back to writing a normal paragraph. There shouldn't be any surprises here---it's like we never entered the tab environment in the first place. Notice how our text is still justified and the margins are aligned as they were before entering the tabs. Setting tabs in Burro is very nice!
+
+.load_tabs[quad-demo]
+.tab[other]
+Other tab
+
+.tab[overflow] Here are a lot of words that overflow the 20 pica length set for this tab (a 20 pica length is shown by ``Other tab'' above). See how we continue on the same line? That's because \.quad\[false\] is set for this tab.
+.quit_tabs
+
+.load_tabs[too-long-demo]
+.tab[too-long]
+This tab will overflow the margin. At least for now, Burro allows you to do this if you tell it so, but it does emit an error so you can think about if this is the actual behavior you want.

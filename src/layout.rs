@@ -1,16 +1,18 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use hyphenation::*;
 use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
+use crate::alignment::Alignment;
 use crate::error::BurroError;
 use crate::fontmap::FontMap;
 use crate::fonts::Font;
 use crate::literals;
-use crate::parser;
 use crate::parser::{Command, DocConfig, Document, Node, ResetArg, StyleBlock, TextUnit};
+use crate::tab::Tab;
 use crate::util::OrdFloat;
 
 #[derive(Debug, PartialEq)]
@@ -80,25 +82,6 @@ impl UpdateRelative for u64 {
 // which excludes fonts or strings.
 impl UpdateRelative for Font {}
 impl UpdateRelative for String {}
-
-#[derive(Debug, PartialEq)]
-enum Alignment {
-    Left,
-    Right,
-    Center,
-    Justify,
-}
-
-impl From<&parser::Alignment> for Alignment {
-    fn from(other: &parser::Alignment) -> Self {
-        match other {
-            parser::Alignment::Left => Self::Left,
-            parser::Alignment::Center => Self::Center,
-            parser::Alignment::Right => Self::Right,
-            parser::Alignment::Justify => Self::Justify,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 struct Word {
@@ -229,6 +212,12 @@ pub struct LayoutBuilder<'a> {
     column_gutter: f64,
     column_top: f64,
     column_bottom: f64,
+    current_tabs: Option<Vec<Rc<Tab>>>,
+    current_tab_ix: Option<usize>,
+    current_tab: Option<Rc<Tab>>,
+    pre_tab_config: Option<(f64, f64, f64, Alignment)>,
+    tab_lists: HashMap<String, Vec<Rc<Tab>>>,
+    tab_top: Option<f64>,
 }
 
 fn load_font_data<'a>(
@@ -344,6 +333,12 @@ impl<'a> LayoutBuilder<'a> {
             column_bottom: cursor.y,
             params,
             cursor,
+            current_tab_ix: None,
+            current_tab: None,
+            current_tabs: None,
+            pre_tab_config: None,
+            tab_lists: HashMap::new(),
+            tab_top: None,
         })
     }
 
@@ -390,7 +385,7 @@ impl<'a> LayoutBuilder<'a> {
         self.params.col_margin_right = margin;
     }
 
-    fn apply_config(&mut self, config: &DocConfig) {
+    fn apply_config(&mut self, config: &DocConfig) -> Result<(), BurroError> {
         if let Some(margin) = config.margins {
             self.recalc_margins(margin);
             self.set_cursor_top_left();
@@ -437,7 +432,7 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         if let Some(alignment) = &config.alignment {
-            self.params.alignment = alignment.into();
+            self.params.alignment = *alignment;
         }
 
         self.indent_first = config.indent_first;
@@ -454,12 +449,50 @@ impl<'a> LayoutBuilder<'a> {
             self.current_page = self.new_page();
             self.set_cursor_top_left();
         }
+
+        self.assign_tabs(config)?;
+
+        Ok(())
+    }
+
+    fn assign_tabs(&mut self, config: &DocConfig) -> Result<(), BurroError> {
+        self.tab_lists.clear();
+        self.current_tabs = None;
+
+        if config.tabs.len() > 0 {
+            let tabs_by_name: HashMap<&str, Rc<Tab>> =
+                HashMap::from_iter(config.tabs.iter().map(|t| {
+                    (
+                        t.name
+                            .as_ref()
+                            .expect("all tabs should have a name in layout, please file a bug")
+                            .as_str(),
+                        Rc::new(t.clone()),
+                    )
+                }));
+
+            for (list, tabs) in config.tab_lists.iter() {
+                let mut tab_list: Vec<Rc<Tab>> = vec![];
+                for tab_name in tabs {
+                    let tab = match tabs_by_name.get(tab_name.as_str()) {
+                        Some(tab) => tab,
+                        None => return Err(BurroError::UndefinedTab(tab_name.clone())),
+                    };
+
+                    tab_list.push(tab.clone());
+                }
+
+                self.tab_lists.insert(list.to_string(), tab_list);
+            }
+        }
+
+        Ok(())
     }
 
     fn handle_command(&mut self, c: &'a Command) -> Result<(), BurroError> {
         match c {
             Command::Align(arg) => match arg {
-                ResetArg::Explicit(dir) => self.set_alignment(dir.into()),
+                ResetArg::Explicit(dir) => self.set_alignment(*dir),
                 ResetArg::Reset => {
                     if let Some(alignment) = self.alignments.pop() {
                         self.params.alignment = alignment;
@@ -726,9 +759,154 @@ impl<'a> LayoutBuilder<'a> {
                     self.cursor.y = self.column_top;
                 }
             }
+            Command::DefineTab(_) => {
+                return Err(BurroError::TabDefInBody);
+            }
+            Command::TabList(..) => {
+                return Err(BurroError::TabListInBody);
+            }
+            Command::LoadTabs(name) => {
+                let tabs = match self.tab_lists.get(name.as_str()) {
+                    Some(list) => list.clone(),
+                    None => return Err(BurroError::UndefinedTab(name.to_string())),
+                };
+
+                // It's important to note in the documentation that .quit_tabs will reset the
+                // margins to the values before .load_tabs, so that if a user edits the margins
+                // after .load_tabs for some reason, they might encounter surprising results.
+                self.pre_tab_config = Some((
+                    self.params.col_margin_left,
+                    self.params.col_margin_right,
+                    self.column_width,
+                    self.params.alignment,
+                ));
+
+                self.current_tab_ix = Some(0);
+                self.current_tab = Some(tabs[0].clone());
+                self.current_tabs = Some(tabs);
+            }
+            Command::Tab(name) => {
+                self.emit_remaining_line();
+                if let Some(tabs) = &self.current_tabs {
+                    let tab_ix = match tabs
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(ix, t)| {
+                            // We've asserted earlier that all of the tab names are unique
+                            if t.name.as_ref() == Some(name) {
+                                Some(ix)
+                            } else {
+                                None
+                            }
+                        })
+                        .nth(0)
+                    {
+                        Some(ix) => ix,
+                        None => return Err(BurroError::UnloadedTab(name.clone())),
+                    };
+                    self.current_tab_ix = Some(tab_ix);
+
+                    if self.tab_top.is_none() {
+                        self.tab_top = Some(self.cursor.y);
+                    }
+
+                    self.load_tab(tabs[tab_ix].clone());
+                } else {
+                    return Err(BurroError::NoTabsLoaded);
+                }
+            }
+            Command::NextTab => {
+                self.emit_remaining_line();
+                if let Some(current_ix) = self.current_tab_ix {
+                    let tabs = self
+                        .current_tabs
+                        .as_ref()
+                        .expect("current_tabs should be loaded if current_tab_ix is set");
+                    let new_ix = current_ix + 1;
+                    if new_ix >= tabs.len() {
+                        return Err(BurroError::TabOutOfRange);
+                    }
+
+                    self.current_tab_ix = Some(new_ix);
+                    self.load_tab(tabs[new_ix].clone());
+                } else {
+                    return Err(BurroError::NoTabsLoaded);
+                }
+            }
+            Command::PreviousTab => {
+                self.emit_remaining_line();
+                if let Some(current_ix) = self.current_tab_ix {
+                    let tabs = self
+                        .current_tabs
+                        .as_ref()
+                        .expect("current_tabs should be loaded if current_tab_ix is set");
+                    if current_ix > 0 {
+                        let new_ix = current_ix - 1;
+                        self.current_tab_ix = Some(new_ix);
+                        self.load_tab(tabs[new_ix].clone());
+                    } else {
+                        return Err(BurroError::TabOutOfRange);
+                    }
+                } else {
+                    return Err(BurroError::NoTabsLoaded);
+                }
+            }
+            Command::QuitTabs => {
+                if let Some((col_left, col_right, col_width, align)) = self.pre_tab_config {
+                    self.params.col_margin_left = col_left;
+                    self.params.col_margin_right = col_right;
+                    self.params.alignment = align;
+                    self.column_width = col_width;
+
+                    self.pre_tab_config = None;
+                    self.current_tab = None;
+                    self.current_tab_ix = None;
+                    self.current_tabs = None;
+                } else {
+                    return Err(BurroError::NoTabsLoaded);
+                }
+            }
         }
 
         Ok(())
+    }
+
+    fn load_tab(&mut self, tab: Rc<Tab>) {
+        // If the user goes out of their way to break things by mixing tabs/columns
+        // in complicated ways, they'll certainly be able to do so.
+        // I'm not sure how much energy we'll spend trying to stop them.
+        // However, we will allow a sane user to use tabs within columns.
+
+        // Load the original left column margin so that we can keep moving it for each new tab.
+        let (col_left, _, col_width, _) =
+            self.pre_tab_config.expect("should have tabs loaded by now");
+        self.params.col_margin_left = col_left + tab.indent;
+        self.cursor.x = self.params.col_margin_left;
+
+        if let Some(y) = self.tab_top {
+            self.cursor.y = y;
+        }
+
+        self.params.alignment = tab.direction;
+        if tab.quad {
+            self.column_width = tab.length;
+        } else {
+            self.column_width = self.params.page_width
+                - self.params.col_margin_right
+                - self.params.page_margin_left
+                - tab.indent;
+        }
+
+        // If the tab overflows the margin, then emit a warning
+        // In the future, we might just not allow this to happen
+        if self.column_width > col_width {
+            log::warn!(
+                "tab {} overflowed page/column margins",
+                tab.name.as_ref().expect("tabs should all have names")
+            );
+        }
+
+        self.current_tab = Some(tab);
     }
 
     pub fn move_to_next_page(&mut self) {
@@ -742,7 +920,7 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     pub fn build(mut self, doc: &'a Document) -> Result<Layout, BurroError> {
-        self.apply_config(&doc.config);
+        self.apply_config(&doc.config)?;
 
         for node in &doc.nodes {
             match node {
@@ -787,6 +965,7 @@ impl<'a> LayoutBuilder<'a> {
         self.cursor.x = self.params.col_margin_left;
 
         self.advance_y_cursor(self.params.leading + self.params.pt_size + self.params.par_space);
+        self.tab_top = None;
 
         self.par_counter += 1;
 
@@ -837,7 +1016,7 @@ impl<'a> LayoutBuilder<'a> {
                             > self.column_width
                         {
                             let mut last_words = self.pop_words(&mut current_line);
-                            if last_words.len() > 1 {
+                            if last_words.len() > 1 && current_line.len() > 0 {
                                 // This condition means we have a non-breaking space
                                 // If we have a non-breaking space joining words,
                                 // we don't try to hyphenate within that block
@@ -847,6 +1026,17 @@ impl<'a> LayoutBuilder<'a> {
                                 self.cursor.x = self.params.col_margin_left;
                                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
                                 self.hyphens = 0;
+                                continue;
+                            } else if current_line.len() == 0 && last_words.len() > 0 {
+                                // As far as I can tell, this only happens when there's a tab stop
+                                // with a word longer than the width of the stop.
+                                debug_assert!(self.current_tab.is_some());
+                                log::warn!("emitting word longer than tab length");
+                                self.emit_line(last_words, false);
+                                continue;
+                            }
+
+                            if last_words.iter().all(|w| w.is_space()) {
                                 continue;
                             }
 
@@ -983,8 +1173,12 @@ impl<'a> LayoutBuilder<'a> {
             if *word.contents != TextUnit::Space {
                 result.insert(0, word);
             } else {
-                line.push(word);
-                break;
+                // Mid-line commands (such as tab stops) can have a space after a word,
+                // so we need to make sure we're not returning an empty result.
+                if result.len() > 0 {
+                    line.push(word);
+                    break;
+                }
             }
         }
 
