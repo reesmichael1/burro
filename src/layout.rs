@@ -896,6 +896,18 @@ impl<'a> LayoutBuilder<'a> {
                 - self.params.page_margin_left
                 - tab.indent;
         }
+
+        // If the tab overflows the margin, then emit a warning
+        // In the future, we might just not allow this to happen
+        if tab.length + self.params.col_margin_left
+            > self.params.page_width - self.params.col_margin_right
+        {
+            log::warn!(
+                "tab {} overflowed page/column margins",
+                tab.name.as_ref().expect("tabs should all have names")
+            );
+        }
+
         self.current_tab = Some(tab);
     }
 
