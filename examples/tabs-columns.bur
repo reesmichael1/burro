@@ -1,0 +1,35 @@
+; Demonstrating tabs working within multiple columns
+.define_tab{
+    .indent[0P]
+    .length[8P]
+    .direction[center]
+}[name]
+.define_tab{
+    .indent[8P]
+    .length[8P]
+    .direction[center]
+}[position]
+
+.tab_list{
+    .1[name]
+    .2[position]
+}[names]
+
+.start
+.columns[2]
+.load_tabs[names]
+.tab[name] NAME .next_tab POSITION
+
+.tab[name] Joan .next_tab Software Developer
+
+.tab[name] Robert .next_tab Quality Assurance
+.quit_tabs
+
+.column_break
+.load_tabs[names]
+.tab[name] NAME .next_tab POSITION
+
+.tab[name] Tom .next_tab Sales
+
+.tab[name] Tess .next_tab Human Resources
+.quit_tabs
