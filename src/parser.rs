@@ -287,6 +287,8 @@ pub enum ParseError {
     MalformedTabList,
     #[error("repeated tab definition for '{0}'")]
     DuplicateTab(String),
+    #[error("repeated curly brace definition for '{0}'")]
+    DuplicateCurlyBraceKey(String),
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -543,6 +545,9 @@ fn parse_curly_brace_syntax(tokens: &[Token]) -> Result<(CurlyBraceData, &[Token
                 match rest {
                     [Token::Newline, Token::Space, Token::Command(var), Token::OpenSquare, Token::Word(def), Token::CloseSquare, rem @ ..] =>
                     {
+                        if result.contains_key(var) {
+                            return Err(ParseError::DuplicateCurlyBraceKey(var.clone()));
+                        }
                         result.insert(var.clone(), def.clone());
                         rest = rem;
                     }
@@ -1604,6 +1609,33 @@ Hello world!";
         ])];
 
         assert_eq!(expected, parsed.nodes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_tab_list_entry_rejected() -> Result<(), ParseError> {
+        let input = ".define_tab{
+    .indent[0P]
+    .direction[left]
+    .length[5P]
+}[test1]
+.define_tab{
+    .indent[8P]
+    .direction[left]
+    .length[5P]
+}[test2]
+.tab_list{
+    .1[test1]
+    .1[test2]
+}[test]
+.start
+.load_tabs[test]";
+
+        match parse_tokens(&lex(input)) {
+            Err(ParseError::DuplicateCurlyBraceKey(num)) => assert!(num == "1"),
+            _ => assert!(false, "should have gotten duplicate error"),
+        };
 
         Ok(())
     }
