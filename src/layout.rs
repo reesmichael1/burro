@@ -599,6 +599,7 @@ impl<'a> LayoutBuilder<'a> {
                 )?;
             }
             Command::LetterSpace(arg) => {
+                self.emit_remaining_line();
                 handle_reset_val(arg, &mut self.params.letter_space, &mut self.letter_spaces)?;
             }
             Command::PtSize(arg) => match arg {
@@ -1030,6 +1031,8 @@ impl<'a> LayoutBuilder<'a> {
                             } else if current_line.len() == 0 && last_words.len() > 0 {
                                 // As far as I can tell, this only happens when there's a tab stop
                                 // with a word longer than the width of the stop.
+                                // Hmmm...it can also happen when we emit the middle of the line
+                                // when right aligned. This is actually a pretty big problem....
                                 debug_assert!(self.current_tab.is_some());
                                 log::warn!("emitting word longer than tab length");
                                 self.emit_line(last_words, false);
@@ -1395,6 +1398,17 @@ impl<'a> LayoutBuilder<'a> {
             .sum();
         let mut space_count = line.iter().filter(|w| w.is_space()).count();
 
+        let letter_space = if self.params.letter_space > 0.0 {
+            let letter_count: usize = line
+                .iter()
+                .filter(|w| !w.is_space())
+                .map(|w| w.str().len())
+                .sum();
+            (letter_count as f64) * self.params.letter_space
+        } else {
+            0.0
+        };
+
         if line
             .last()
             .expect("should have at least one element in the line")
@@ -1403,7 +1417,7 @@ impl<'a> LayoutBuilder<'a> {
             space_count -= 1;
         }
         let space_width = self.params.space_width * space_count as f64;
-        word_width + space_width
+        word_width + space_width + letter_space
     }
 }
 
