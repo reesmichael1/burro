@@ -1,10 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use lazy_static::lazy_static;
-use regex::Regex;
-use thiserror::Error;
-
 use crate::alignment::Alignment;
 use crate::fonts::Font;
 use crate::lexer::Token;
@@ -12,6 +8,14 @@ use crate::literals;
 use crate::tab::Tab;
 
 const DEFAULT_COL_GUTTER: f64 = 20.0;
+
+mod doc_config;
+mod error;
+mod units;
+
+pub use doc_config::DocConfig;
+pub use error::ParseError;
+pub use units::{parse_unit, PointsVal};
 
 #[derive(Debug, PartialEq)]
 pub enum Command {
@@ -99,196 +103,6 @@ pub struct Document {
 struct Argument {
     name: String,
     value: String,
-}
-
-#[derive(Default, Debug, PartialEq)]
-pub struct DocConfig {
-    pub margins: Option<f64>,
-    pub pt_size: Option<f64>,
-    pub page_width: Option<f64>,
-    pub page_height: Option<f64>,
-    pub leading: Option<f64>,
-    pub par_space: Option<f64>,
-    pub par_indent: Option<f64>,
-    pub space_width: Option<f64>,
-    pub family: Option<String>,
-    pub font: Option<Font>,
-    pub indent_first: bool,
-    pub alignment: Option<Alignment>,
-    pub consecutive_hyphens: Option<u64>,
-    pub letter_space: Option<f64>,
-    pub tabs: Vec<Tab>,
-    pub tab_lists: HashMap<String, Vec<String>>,
-}
-
-impl DocConfig {
-    fn build() -> Self {
-        Self::default()
-    }
-
-    fn with_margins(mut self, margins: f64) -> Self {
-        self.margins = Some(margins);
-        self
-    }
-
-    fn with_pt_size(mut self, pt_size: f64) -> Self {
-        self.pt_size = Some(pt_size);
-        self
-    }
-
-    fn with_page_height(mut self, height: f64) -> Self {
-        self.page_height = Some(height);
-        self
-    }
-
-    fn with_page_width(mut self, width: f64) -> Self {
-        self.page_width = Some(width);
-        self
-    }
-
-    fn with_leading(mut self, lead: f64) -> Self {
-        self.leading = Some(lead);
-        self
-    }
-
-    fn with_par_space(mut self, space: f64) -> Self {
-        self.par_space = Some(space);
-        self
-    }
-
-    fn with_par_indent(mut self, indent: f64) -> Self {
-        self.par_indent = Some(indent);
-        self
-    }
-
-    fn with_space_width(mut self, width: f64) -> Self {
-        self.space_width = Some(width);
-        self
-    }
-
-    fn with_family(mut self, family: String) -> Self {
-        self.family = Some(family);
-        self
-    }
-
-    fn with_font(mut self, font: Font) -> Self {
-        self.font = Some(font);
-        self
-    }
-
-    fn with_indent_first(mut self, indent_first: bool) -> Self {
-        self.indent_first = indent_first;
-        self
-    }
-
-    fn with_alignment(mut self, alignment: Alignment) -> Self {
-        self.alignment = Some(alignment);
-        self
-    }
-
-    fn with_consecutive_hyphens(mut self, hyphens: u64) -> Self {
-        self.consecutive_hyphens = Some(hyphens);
-        self
-    }
-
-    fn with_letter_space(mut self, letter_space: f64) -> Self {
-        self.letter_space = Some(letter_space);
-        self
-    }
-
-    fn add_tab(mut self, tab: Tab) -> Result<Self, ParseError> {
-        let mut tab = tab;
-
-        if tab.name.is_none() {
-            tab.name = Some(format!("{}", self.tabs.len() + 1));
-        }
-
-        if self.tabs.iter().any(|t| t.name == tab.name) {
-            return Err(ParseError::DuplicateTab(
-                tab.name.expect("all tab names should be set").clone(),
-            ));
-        }
-
-        self.tabs.push(tab);
-        Ok(self)
-    }
-
-    fn add_tab_list(mut self, list: Vec<String>, name: String) -> Self {
-        self.tab_lists.insert(name, list);
-        self
-    }
-}
-
-#[derive(Debug, Error)]
-pub enum ParseError {
-    #[error("invalid align argument: {0}")]
-    InvalidAlign(String),
-    #[error("tokens left over at the end")]
-    ExtraTokens,
-    #[error("this feature not implemented yet")]
-    Unimplemented,
-    #[error("encountered unescaped [")]
-    UnescapedOpenBrace,
-    #[error("encountered unescaped ]")]
-    UnescapedCloseBrace,
-    #[error("encountered unescaped -")]
-    UnescapedHyphen,
-    #[error("unknown command: '{0}'")]
-    UnknownCommand(String),
-    #[error("malformed align command")]
-    MalformedAlign,
-    #[error("malformed bold command")]
-    MalformedBold,
-    #[error("malformed italic command")]
-    MalformedItalic,
-    #[error("invalid style block")]
-    InvalidStyleBlock,
-    #[error("expected to find more tokens, found EOF instead")]
-    EndedEarly,
-    #[error("malformed command with measure unit argument")]
-    MalformedUnitCommand,
-    #[error("invalid command encountered in document configuration")]
-    InvalidConfiguration,
-    #[error("invalid value {0} encountered when integer expected")]
-    InvalidInt(String),
-    #[error("invalid unit {0} encountered as measurement")]
-    InvalidBool(String),
-    #[error("invalid value {0} encountered when bool expected")]
-    InvalidUnit(String),
-    #[error("invalid command with string argument")]
-    MalformedStrCommand,
-    #[error("encountered reset command in invalid context")]
-    InvalidReset,
-    #[error("malformed quote command")]
-    MalformedQuote,
-    #[error("malformed open quote command")]
-    MalformedOpenQuote,
-    #[error("malformed smallcaps command")]
-    MalformedSmallcaps,
-    #[error("invalid command with integer argument")]
-    MalformedIntCommand,
-    #[error("malformed rule command")]
-    MalformedRule,
-    #[error("unsupported curly-brace argument")]
-    InvalidArgument,
-    #[error("malformed columns command")]
-    MalformedColumns,
-    #[error("tried to use relative argument for an unsupported command")]
-    InvalidRelative,
-    #[error("malformed define_tab command")]
-    MalformedDefineTab,
-    #[error("entered curly brace parser without curly brace")]
-    MissingCurlyBrace,
-    #[error("bad curly brace syntax")]
-    MalformedCurlyBrace,
-    #[error("invalid tab direction")]
-    InvalidTabDirection,
-    #[error("bad tab list syntax")]
-    MalformedTabList,
-    #[error("repeated tab definition for '{0}'")]
-    DuplicateTab(String),
-    #[error("repeated curly brace definition for '{0}'")]
-    DuplicateCurlyBraceKey(String),
 }
 
 fn pop_spaces(tokens: &[Token]) -> &[Token] {
@@ -915,72 +729,6 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
             Token::Newline => tokens = &tokens[1..],
             _ => return Err(ParseError::InvalidConfiguration),
         }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub enum PointsVal {
-    Static(f64),
-    Relative(f64),
-}
-
-impl PointsVal {
-    fn value(&self) -> Result<f64, ParseError> {
-        match self {
-            PointsVal::Relative(_) => Err(ParseError::InvalidRelative),
-            PointsVal::Static(val) => Ok(*val),
-        }
-    }
-}
-
-// Internally, we keep everything in points,
-// but we want to accept arguments in many units:
-// points, picas, millimeters, inches, etc.
-// (We'll add more units as needed.)
-fn parse_unit(input: &str) -> Result<PointsVal, ParseError> {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"^(?P<sign>[+-]?)(?P<num>[\d\.]+)(?P<unit>[\w%]*)$")
-            .expect("should have a valid regex here");
-    }
-    let caps = RE
-        .captures(input)
-        .ok_or(ParseError::InvalidUnit(input.to_string()))?;
-    let num = caps.name("num").expect("should have a matching group");
-    let mut num = num
-        .as_str()
-        .parse::<f64>()
-        .map_err(|_| ParseError::InvalidInt(input.to_string()))?;
-
-    let mut relative = false;
-
-    if let Some(unit) = caps.name("unit") {
-        num = match unit.as_str() {
-            "pt" => num,
-            "in" => 72. * num,
-            "mm" => 2.83464576 * num,
-            "P" => 12. * num,
-            "" => num,
-            "%" => num / 100.,
-            _ => return Err(ParseError::InvalidUnit(unit.as_str().to_string())),
-        };
-    }
-
-    if let Some(sign) = caps.name("sign") {
-        match sign.as_str() {
-            "" => {}
-            "+" => relative = true,
-            "-" => {
-                relative = true;
-                num *= -1.;
-            }
-            _ => unreachable!(),
-        };
-    };
-
-    if relative {
-        Ok(PointsVal::Relative(num))
-    } else {
-        Ok(PointsVal::Static(num))
     }
 }
 
