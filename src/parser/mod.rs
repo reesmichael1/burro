@@ -47,6 +47,7 @@ pub enum Command {
     NextTab,
     PreviousTab,
     QuitTabs,
+    Ligatures(bool),
 }
 
 #[derive(Debug, PartialEq)]
@@ -117,6 +118,28 @@ fn parse_bool_arg(val: &str) -> Result<bool, ParseError> {
         "true" => Ok(true),
         "false" => Ok(false),
         _ => Err(ParseError::InvalidBool(val.to_string())),
+    }
+}
+
+// There are times where we'll want to be generous with boolean arguments
+// (for example, .ligatures[on] is nicer than .ligatures[true])
+// This could maybe become a slippery slope, so we need to be careful
+// As long as this remains clearly documented, this shouldn't cause too much confusion
+// We can always revisit this in the future if it becomes a problem.
+fn parse_relaxed_bool_arg(val: &str) -> Result<bool, ParseError> {
+    match val {
+        "true" | "on" | "yes" => Ok(true),
+        "false" | "off" | "no" => Ok(false),
+        _ => Err(ParseError::InvalidBool(val.to_string())),
+    }
+}
+
+fn parse_bool_command(tokens: &[Token]) -> Result<(bool, &[Token]), ParseError> {
+    match tokens {
+        [Token::Command(_), Token::OpenSquare, Token::Word(arg), Token::CloseSquare, rest @ ..] => {
+            Ok((parse_relaxed_bool_arg(arg)?, rest))
+        }
+        _ => Err(ParseError::MalformedBoolCommand),
     }
 }
 
@@ -290,6 +313,10 @@ fn parse_command(name: String, tokens: &[Token]) -> Result<(Node, &[Token]), Par
             pop_spaces(&tokens[1..]),
         )),
         "quit_tabs" => Ok((Node::Command(Command::QuitTabs), pop_spaces(&tokens[1..]))),
+        "ligatures" => {
+            let (arg, rem) = parse_bool_command(tokens)?;
+            Ok((Node::Command(Command::Ligatures(arg)), rem))
+        }
         _ => Err(ParseError::UnknownCommand(name)),
     }
 }
@@ -719,6 +746,9 @@ fn parse_config(tokens: &[Token]) -> Result<(DocConfig, &[Token]), ParseError> {
                         }
                         Node::Command(Command::TabList(list, name)) => {
                             config = config.add_tab_list(list, name);
+                        }
+                        Node::Command(Command::Ligatures(l)) => {
+                            config = config.with_ligatures(l);
                         }
                         _ => return Err(ParseError::InvalidConfiguration),
                     }

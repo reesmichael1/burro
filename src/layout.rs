@@ -96,12 +96,32 @@ struct Word {
 }
 
 impl Word {
-    fn new(word: Arc<TextUnit>, face: &Face, font_id: u32, pt_size: f64) -> Self {
+    fn new(word: Arc<TextUnit>, face: &Face, font_id: u32, pt_size: f64, ligatures: bool) -> Self {
         match &*word {
             TextUnit::Str(s) => {
                 let mut in_buf = UnicodeBuffer::new();
                 in_buf.push_str(&s);
-                let out_buf = shape(&face, &vec![], in_buf);
+                // If ligatures are currently disabled, turn them off here
+                // liga = standard ligatures
+                // dlig = discretionary ligatures
+                // clig = contextual ligatures
+                // We're not disabling rlig ("required ligatures") since those are, well, required
+                // TODO: allow the user to control more of these features independently
+                let lig_tags = [b"liga", b"dlig", b"clig", b"rlig"];
+                let features: Vec<rustybuzz::Feature> = if !ligatures {
+                    lig_tags
+                        .iter()
+                        // s.len() reports the number of bytes we need to format
+                        // (NOT the number of graphemes), which is what rustybuzz::shape expects
+                        .map(|t| {
+                            rustybuzz::Feature::new(ttf_parser::Tag::from_bytes(t), 0, 0..s.len())
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                let out_buf = shape(&face, &features, in_buf);
                 let info = out_buf.glyph_infos();
                 let positions = out_buf.glyph_positions();
 
@@ -170,6 +190,7 @@ struct BurroParams {
     hyphenate: bool,
     consecutive_hyphens: u64,
     letter_space: f64,
+    ligatures: bool,
 }
 
 #[derive(Debug)]
@@ -288,6 +309,7 @@ impl<'a> LayoutBuilder<'a> {
             hyphenate: true,
             consecutive_hyphens: 3,
             letter_space: 0.,
+            ligatures: true,
         };
 
         let font_data = load_font_data(font_map)?;
@@ -443,6 +465,10 @@ impl<'a> LayoutBuilder<'a> {
 
         if let Some(space) = config.letter_space {
             self.params.letter_space = space;
+        }
+
+        if let Some(ligatures) = config.ligatures {
+            self.params.ligatures = ligatures;
         }
 
         if config.page_height.is_some() || config.page_width.is_some() {
@@ -867,6 +893,7 @@ impl<'a> LayoutBuilder<'a> {
                     return Err(BurroError::NoTabsLoaded);
                 }
             }
+            Command::Ligatures(l) => self.params.ligatures = *l,
         }
 
         Ok(())
@@ -1010,6 +1037,7 @@ impl<'a> LayoutBuilder<'a> {
                             &face,
                             font_id,
                             self.params.pt_size,
+                            self.params.ligatures,
                         ));
 
                         if self.total_line_width(&current_line)
@@ -1069,12 +1097,14 @@ impl<'a> LayoutBuilder<'a> {
                                             &face,
                                             font_id,
                                             self.params.pt_size,
+                                            self.params.ligatures,
                                         );
                                         let rest = Word::new(
                                             Arc::new(rest),
                                             &face,
                                             font_id,
                                             self.params.pt_size,
+                                            self.params.ligatures,
                                         );
 
                                         current_line.push(start.clone());
@@ -1204,8 +1234,13 @@ impl<'a> LayoutBuilder<'a> {
             .font_map
             .font_id(&self.params.font_family, self.font.font_num());
 
-        self.current_line
-            .push(Word::new(word.clone(), &face, font_id, self.params.pt_size));
+        self.current_line.push(Word::new(
+            word.clone(),
+            &face,
+            font_id,
+            self.params.pt_size,
+            self.params.ligatures,
+        ));
 
         Ok(())
     }

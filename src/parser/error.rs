@@ -70,4 +70,6 @@ pub enum ParseError {
     DuplicateTab(String),
     #[error("repeated curly brace definition for '{0}'")]
     DuplicateCurlyBraceKey(String),
+    #[error("malformed command with boolean argument")]
+    MalformedBoolCommand,
 }

@@ -24,6 +24,7 @@ pub struct DocConfig {
     pub letter_space: Option<f64>,
     pub tabs: Vec<Tab>,
     pub tab_lists: HashMap<String, Vec<String>>,
+    pub ligatures: Option<bool>,
 }
 
 impl DocConfig {
@@ -98,6 +99,11 @@ impl DocConfig {
 
     pub fn with_letter_space(mut self, letter_space: f64) -> Self {
         self.letter_space = Some(letter_space);
+        self
+    }
+
+    pub fn with_ligatures(mut self, ligatures: bool) -> Self {
+        self.ligatures = Some(ligatures);
         self
     }
 

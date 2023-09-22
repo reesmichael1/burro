@@ -1,0 +1,9 @@
+.family[Cardo]
+.start
+In this line, ligatures are enabled. Below, the word ``different'' and the ``ffi'' letter combination will look different than they do on this line.
+
+.ligatures[off]
+Now, ligatures are disabled. See how different looks different? Also note that I'm typing this in the office.
+
+.ligatures[on]
+Ligatures are officially once again enabled!
