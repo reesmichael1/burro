@@ -11,6 +11,7 @@ use crate::layout::{BurroBox, Layout, Page};
 
 pub fn write_pdf(layout: &Layout, font_map: &FontMap, dest: &Path) -> Result<(), BurroError> {
     if layout.pages.len() == 0 {
+        log::warn!("no content in document, not writing anything");
         return Ok(());
     }
 

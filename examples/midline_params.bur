@@ -1,0 +1,18 @@
+.start
+; This demonstrates the layout changes which fixed #34 and #35
+.align[right]
+.letter_space[+4pt]
+Here's some simple text.
+
+.letter_space[-]
+And here's another line to show the proper margin.
+
+Here are a lot of words to make us reach a line break. Looks like we'll have~to~do~a~lot~more. No worries, we can add more words here. Also, ``have to do a lot more'' were bound together with non-breaking spaces (which is why that first line is so much shorter than the others in this paragraph).
+
+Mid-line .pt_size[+24pt] size .pt_size[-] changes still work. .bold[To really mess with things], .letter_space[+3pt]here's a demonstration.letter_space[-] of changing the letter spacing in the middle of the line.
+
+.align[center]
+This shows that centering still works.
+
+.align[justify]
+This shows that justification still works. Hyphenation is enabled, so we are still able to hyphenate a word.

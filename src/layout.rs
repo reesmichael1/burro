@@ -3,7 +3,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use hyphenation::*;
-use rustybuzz::{shape, GlyphInfo, GlyphPosition, UnicodeBuffer};
+use rustybuzz::{shape, UnicodeBuffer};
 use rustybuzz::{ttf_parser, Face};
 
 use crate::alignment::Alignment;
@@ -33,6 +33,155 @@ impl Page {
             boxes: vec![],
             height,
             width,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+/// LetterPos represents the position of an individual glyph within a word.
+struct LetterPos {
+    glyph_id: u32,
+    font_id: u32,
+    pt_size: f64,
+    width: f64,
+    delta_y: f64,
+    // This shows the distance from the start of the word to this glyph.
+    // It's technically redundant since we have all the widths,
+    // but it's convenient to have around.
+    delta_x: f64,
+}
+
+#[derive(Clone, Debug)]
+/// EmitChunks are groups of "things" that can be emitted onto the page.
+enum EmitChunk {
+    Word {
+        pt_size: f64,
+        glyphs: Vec<LetterPos>,
+        str: String,
+    },
+    Space {
+        pt_size: f64,
+        width: f64,
+    },
+    NonBreakingSpace {
+        pt_size: f64,
+        width: f64,
+    },
+}
+
+impl EmitChunk {
+    fn new(
+        word: Arc<TextUnit>,
+        face: &Face,
+        font_id: u32,
+        pt_size: f64,
+        ligatures: bool,
+        letter_space: f64,
+        space_width: f64,
+    ) -> Self {
+        match &*word {
+            TextUnit::Str(s) => {
+                let mut in_buf = UnicodeBuffer::new();
+                in_buf.push_str(&s);
+                // If ligatures are currently disabled, turn them off here
+                // liga = standard ligatures
+                // dlig = discretionary ligatures
+                // clig = contextual ligatures
+                // We're not disabling rlig ("required ligatures") since those are, well, required
+                // TODO: allow the user to control more of these features independently
+                let lig_tags = [b"liga", b"dlig", b"clig", b"rlig"];
+                let features: Vec<rustybuzz::Feature> = if !ligatures {
+                    lig_tags
+                        .iter()
+                        // s.len() reports the number of bytes we need to format
+                        // (NOT the number of graphemes), which is what rustybuzz::shape expects
+                        .map(|t| {
+                            rustybuzz::Feature::new(ttf_parser::Tag::from_bytes(t), 0, 0..s.len())
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                let out_buf = shape(&face, &features, in_buf);
+                let info = out_buf.glyph_infos();
+                let positions = out_buf.glyph_positions();
+
+                let mut x = 0.0;
+
+                let upem = face.units_per_em();
+
+                let mut glyphs: Vec<LetterPos> = vec![];
+                for (ix, glyph) in info.iter().enumerate() {
+                    let pos = positions[ix];
+
+                    let width = font_units_to_points(pos.x_advance, upem, pt_size) + letter_space;
+                    let delta_y = font_units_to_points(pos.y_advance, upem, pt_size);
+
+                    glyphs.push(LetterPos {
+                        glyph_id: glyph.glyph_id,
+                        delta_x: x,
+                        delta_y,
+                        width,
+                        pt_size,
+                        font_id,
+                    });
+
+                    x += width;
+                }
+
+                Self::Word {
+                    pt_size,
+                    glyphs,
+                    str: s.to_string(),
+                }
+            }
+
+            TextUnit::Space => Self::Space {
+                pt_size,
+                width: space_width,
+            },
+
+            TextUnit::NonBreakingSpace => Self::NonBreakingSpace {
+                pt_size,
+                width: space_width,
+            },
+        }
+    }
+
+    fn is_space(&self) -> bool {
+        match self {
+            EmitChunk::Word { .. } => false,
+            EmitChunk::Space { .. } | EmitChunk::NonBreakingSpace { .. } => true,
+        }
+    }
+
+    fn width(&self) -> f64 {
+        match self {
+            EmitChunk::Word { glyphs, .. } => {
+                if glyphs.len() == 0 {
+                    return 0.0;
+                }
+
+                let last = glyphs.last().unwrap();
+                last.delta_x + last.width
+            }
+            EmitChunk::Space { width, .. } | EmitChunk::NonBreakingSpace { width, .. } => *width,
+        }
+    }
+
+    fn pt_size(&self) -> f64 {
+        match self {
+            EmitChunk::Word { pt_size, .. }
+            | EmitChunk::Space { pt_size, .. }
+            | EmitChunk::NonBreakingSpace { pt_size, .. } => *pt_size,
+        }
+    }
+
+    fn str(&self) -> &str {
+        match self {
+            EmitChunk::Word { str, .. } => str.as_str(),
+            EmitChunk::Space { .. } | EmitChunk::NonBreakingSpace { .. } => unreachable!(),
         }
     }
 }
@@ -83,93 +232,6 @@ impl UpdateRelative for u64 {
 impl UpdateRelative for Font {}
 impl UpdateRelative for String {}
 
-#[derive(Clone, Debug)]
-struct Word {
-    contents: Arc<TextUnit>,
-    char_boxes: Vec<GlyphPosition>,
-    char_infos: Vec<GlyphInfo>,
-    font_id: u32,
-    // It feels like I shouldn't have to keep track of both units-per-em and point size?
-    // Presumably one can be derived from the other.
-    pt_size: f64,
-    upem: i32,
-}
-
-impl Word {
-    fn new(word: Arc<TextUnit>, face: &Face, font_id: u32, pt_size: f64, ligatures: bool) -> Self {
-        match &*word {
-            TextUnit::Str(s) => {
-                let mut in_buf = UnicodeBuffer::new();
-                in_buf.push_str(&s);
-                // If ligatures are currently disabled, turn them off here
-                // liga = standard ligatures
-                // dlig = discretionary ligatures
-                // clig = contextual ligatures
-                // We're not disabling rlig ("required ligatures") since those are, well, required
-                // TODO: allow the user to control more of these features independently
-                let lig_tags = [b"liga", b"dlig", b"clig", b"rlig"];
-                let features: Vec<rustybuzz::Feature> = if !ligatures {
-                    lig_tags
-                        .iter()
-                        // s.len() reports the number of bytes we need to format
-                        // (NOT the number of graphemes), which is what rustybuzz::shape expects
-                        .map(|t| {
-                            rustybuzz::Feature::new(ttf_parser::Tag::from_bytes(t), 0, 0..s.len())
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
-
-                let out_buf = shape(&face, &features, in_buf);
-                let info = out_buf.glyph_infos();
-                let positions = out_buf.glyph_positions();
-
-                Self {
-                    contents: word,
-                    char_boxes: positions.to_vec(),
-                    char_infos: info.to_vec(),
-                    pt_size,
-                    font_id,
-                    upem: face.units_per_em(),
-                }
-            }
-
-            TextUnit::Space | TextUnit::NonBreakingSpace => Self {
-                contents: word,
-                char_boxes: vec![],
-                char_infos: vec![],
-                pt_size,
-                font_id,
-                upem: 0,
-            },
-        }
-    }
-
-    fn width(&self) -> f64 {
-        font_units_to_points(
-            self.char_boxes.iter().map(|c| c.x_advance).sum(),
-            self.upem,
-            self.pt_size,
-        )
-    }
-
-    fn is_space(&self) -> bool {
-        match *self.contents {
-            TextUnit::Space | TextUnit::NonBreakingSpace => true,
-            _ => false,
-        }
-    }
-
-    fn str(&self) -> &str {
-        match &*self.contents {
-            TextUnit::Str(s) => &s,
-            TextUnit::Space | TextUnit::NonBreakingSpace => unreachable!(),
-        }
-    }
-}
-
-// All values are in points.
 struct BurroParams {
     margin_top: f64,
     margin_bottom: f64,
@@ -207,7 +269,7 @@ pub struct LayoutBuilder<'a> {
     font_data: HashMap<(String, Font), Vec<u8>>,
     font_map: &'a FontMap,
     current_page: Page,
-    current_line: Vec<Word>,
+    emit_chunks: Vec<EmitChunk>,
     par_counter: usize,
     alignments: Vec<Alignment>,
     margins: Vec<f64>,
@@ -322,11 +384,11 @@ impl<'a> LayoutBuilder<'a> {
 
         Ok(Self {
             current_page: Page::new(params.page_width, params.page_height),
+            emit_chunks: vec![],
             pages: vec![],
             font: Font::ROMAN,
             font_data,
             font_map,
-            current_line: vec![],
             par_counter: 0,
             alignments: vec![],
             margins: vec![],
@@ -550,7 +612,7 @@ impl<'a> LayoutBuilder<'a> {
                 // If we haven't already encountered any words,
                 // we need to move our cursor to the left margin
                 // (otherwise, it would be aligned for the old margin).
-                if self.current_line.len() == 0 {
+                if self.emit_chunks.len() == 0 {
                     self.set_paragraph_cursor();
                 }
             }
@@ -625,7 +687,6 @@ impl<'a> LayoutBuilder<'a> {
                 )?;
             }
             Command::LetterSpace(arg) => {
-                self.emit_remaining_line();
                 handle_reset_val(arg, &mut self.params.letter_space, &mut self.letter_spaces)?;
             }
             Command::PtSize(arg) => match arg {
@@ -660,23 +721,25 @@ impl<'a> LayoutBuilder<'a> {
                 }
             },
             Command::Break => {
-                self.emit_remaining_line();
+                self.finalize_current_chunks(true);
                 self.cursor.x = self.params.page_margin_left;
                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
             }
             Command::Spread => {
-                let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
-                self.emit_line(remaining_line, false);
+                self.finalize_current_chunks(false);
                 self.cursor.x = self.params.page_margin_left;
                 self.advance_y_cursor(self.params.leading + self.params.pt_size);
             }
             Command::VSpace(space) => {
-                self.emit_remaining_line();
+                self.finalize_current_chunks(true);
                 self.advance_y_cursor(*space);
             }
             Command::HSpace(arg) => match arg {
                 ResetArg::Explicit(space) => {
-                    self.emit_remaining_line();
+                    // Hmmm, do we really want to emit these chunks now?
+                    // I think it makes sense to say that the .hspace macro finalizes
+                    // whatever's in the current line, so those spaces are set in stone.
+                    self.finalize_current_chunks(true);
                     self.cursor.x += space;
                     if self.cursor.x >= self.params.col_margin_left + self.column_width {
                         self.cursor.x = self.params.page_margin_left;
@@ -684,7 +747,7 @@ impl<'a> LayoutBuilder<'a> {
                     }
                 }
                 ResetArg::Reset => {
-                    self.emit_remaining_line();
+                    self.finalize_current_chunks(true);
                     self.cursor.x = self.params.page_margin_left;
                 }
                 ResetArg::Relative(_) => return Err(BurroError::InvalidRelative),
@@ -813,7 +876,7 @@ impl<'a> LayoutBuilder<'a> {
                 self.current_tabs = Some(tabs);
             }
             Command::Tab(name) => {
-                self.emit_remaining_line();
+                self.finalize_current_chunks(true);
                 if let Some(tabs) = &self.current_tabs {
                     let tab_ix = match tabs
                         .iter()
@@ -843,7 +906,7 @@ impl<'a> LayoutBuilder<'a> {
                 }
             }
             Command::NextTab => {
-                self.emit_remaining_line();
+                self.finalize_current_chunks(true);
                 if let Some(current_ix) = self.current_tab_ix {
                     let tabs = self
                         .current_tabs
@@ -861,7 +924,7 @@ impl<'a> LayoutBuilder<'a> {
                 }
             }
             Command::PreviousTab => {
-                self.emit_remaining_line();
+                self.finalize_current_chunks(true);
                 if let Some(current_ix) = self.current_tab_ix {
                     let tabs = self
                         .current_tabs
@@ -897,6 +960,11 @@ impl<'a> LayoutBuilder<'a> {
         }
 
         Ok(())
+    }
+
+    fn finalize_current_chunks(&mut self, last: bool) {
+        let emit_chunks = std::mem::replace(&mut self.emit_chunks, vec![]);
+        self.finalize_line(emit_chunks, last);
     }
 
     fn load_tab(&mut self, tab: Rc<Tab>) {
@@ -1001,159 +1069,148 @@ impl<'a> LayoutBuilder<'a> {
     }
 
     fn finish_paragraph(&mut self) {
-        self.emit_remaining_line();
+        let emit_chunks = std::mem::replace(&mut self.emit_chunks, vec![]);
+        self.finalize_line(emit_chunks, true);
+    }
+
+    fn handle_text_block(&mut self, words: &[Arc<TextUnit>]) -> Result<(), BurroError> {
+        // Iterate over the words and get rustybuzz's shaping of each word.
+        // Once we know the width of each word, we can determine if
+        // we need to add a line break or not.
+        //
+        // Then, once we know where the lines are,
+        // we can continue by adding a box for each glyph position.
+        let font_data = self
+            .font_data
+            .get(&(self.params.font_family.clone(), self.font))
+            .ok_or(BurroError::UnmappedFont)?
+            .clone();
+
+        let face =
+            ttf_parser::Face::parse(&font_data, 0).map_err(|_| BurroError::FaceParsingError)?;
+
+        let face = rustybuzz::Face::from_face(face).ok_or(BurroError::FaceParsingError)?;
+
+        let font_id = self
+            .font_map
+            .font_id(&self.params.font_family, self.font.font_num());
+        let mut emit_chunks = std::mem::replace(&mut self.emit_chunks, vec![]);
+
+        for word in words {
+            let chunk = self.create_emit_chunk(word.clone(), &face, font_id);
+            emit_chunks.push(chunk);
+
+            if self.total_line_width(&emit_chunks) + (self.cursor.x - self.params.col_margin_left)
+                > self.column_width
+            {
+                let mut last_words = self.pop_chunks(&mut emit_chunks);
+                if last_words.len() > 1 && emit_chunks.len() > 0 {
+                    // This condition means we have a non-breaking space
+                    // If we have a non-breaking space joining words,
+                    // we don't try to hyphenate within that block
+                    self.finalize_line(emit_chunks, false);
+                    emit_chunks = last_words;
+
+                    self.cursor.x = self.params.col_margin_left;
+                    self.advance_y_cursor(self.params.leading + self.params.pt_size);
+                    self.hyphens = 0;
+                    continue;
+                } else if emit_chunks.len() == 0 && last_words.len() > 0 {
+                    // As far as I can tell, this only happens when there's a tab stop
+                    // with a word longer than the width of the stop.
+                    debug_assert!(self.current_tab.is_some());
+                    log::warn!("emitting word longer than tab length");
+                    self.finalize_line(last_words, false);
+                    continue;
+                }
+
+                if last_words.iter().all(|w| w.is_space()) {
+                    continue;
+                }
+
+                let mut last_word = last_words
+                    .pop()
+                    .expect("still need to handle words longer than the line");
+
+                if self.params.alignment == Alignment::Justify
+                    && self.params.hyphenate
+                    && self.hyphens < self.params.consecutive_hyphens
+                {
+                    let s = last_word.str();
+                    let hyphenated = self.hyphenation.hyphenate(s);
+                    let breaks = &hyphenated.breaks;
+                    let mut best_spacing = self.justified_space_width(&emit_chunks);
+                    let mut best_start: Option<EmitChunk> = None;
+                    let mut best_rest: Option<EmitChunk> = None;
+
+                    if breaks.len() > 0 {
+                        for b in breaks {
+                            let mut start = s[0..*b].to_string();
+                            start.push_str("-");
+                            let start = TextUnit::Str(start);
+                            let rest = TextUnit::Str(s[*b..].to_string());
+
+                            let start = self.create_emit_chunk(Arc::new(start), &face, font_id);
+                            let rest = self.create_emit_chunk(Arc::new(rest), &face, font_id);
+
+                            emit_chunks.push(start.clone());
+                            let new_spacing = self.justified_space_width(&emit_chunks);
+                            if (new_spacing - self.params.space_width).abs()
+                                < (best_spacing - self.params.space_width).abs()
+                                && new_spacing >= self.params.min_space_width
+                            {
+                                best_spacing = new_spacing;
+                                best_start = Some(start);
+                                best_rest = Some(rest);
+                            }
+
+                            emit_chunks.pop();
+                        }
+                    }
+
+                    if let Some(start) = best_start {
+                        self.hyphens += 1;
+                        emit_chunks.push(start);
+                        self.finalize_line(emit_chunks, false);
+                        emit_chunks = vec![];
+                        if let Some(rest) = best_rest {
+                            last_word = rest;
+                        }
+                    } else {
+                        self.hyphens = 0;
+                    }
+                } else {
+                    self.hyphens = 0;
+                }
+
+                while last_word.is_space() {
+                    last_word = match emit_chunks.pop() {
+                        Some(w) => w,
+                        None => return Ok(()),
+                    };
+                }
+
+                self.finalize_line(emit_chunks, false);
+
+                self.cursor.x = self.params.col_margin_left;
+                self.advance_y_cursor(self.params.leading + self.params.pt_size);
+
+                emit_chunks = vec![last_word];
+            }
+        }
+
+        // These are the chunks left over that have not yet been emitted.
+        // We hold on to them for the next time we need to determine anything.
+        self.emit_chunks = emit_chunks;
+
+        Ok(())
     }
 
     fn handle_style_blocks(&mut self, blocks: &'a [StyleBlock]) -> Result<(), BurroError> {
         for block in blocks {
             match block {
                 StyleBlock::Text(words) => {
-                    // Iterate over the words and get rustybuzz's shaping of each word.
-                    // Once we know the width of each word, we can determine if
-                    // we need to add a line break or not.
-                    //
-                    // Then, once we know where the lines are,
-                    // we can continue by adding a box for each glyph position.
-                    let font_data = self
-                        .font_data
-                        .get(&(self.params.font_family.clone(), self.font))
-                        .ok_or(BurroError::UnmappedFont)?
-                        .clone();
-
-                    let face = ttf_parser::Face::parse(&font_data, 0)
-                        .map_err(|_| BurroError::FaceParsingError)?;
-
-                    let face =
-                        rustybuzz::Face::from_face(face).ok_or(BurroError::FaceParsingError)?;
-
-                    let font_id = self
-                        .font_map
-                        .font_id(&self.params.font_family, self.font.font_num());
-                    let mut current_line = std::mem::replace(&mut self.current_line, vec![]);
-
-                    for word in words {
-                        current_line.push(Word::new(
-                            word.clone(),
-                            &face,
-                            font_id,
-                            self.params.pt_size,
-                            self.params.ligatures,
-                        ));
-
-                        if self.total_line_width(&current_line)
-                            + (self.cursor.x - self.params.col_margin_left)
-                            > self.column_width
-                        {
-                            let mut last_words = self.pop_words(&mut current_line);
-                            if last_words.len() > 1 && current_line.len() > 0 {
-                                // This condition means we have a non-breaking space
-                                // If we have a non-breaking space joining words,
-                                // we don't try to hyphenate within that block
-                                self.emit_line(current_line, false);
-                                current_line = last_words;
-
-                                self.cursor.x = self.params.col_margin_left;
-                                self.advance_y_cursor(self.params.leading + self.params.pt_size);
-                                self.hyphens = 0;
-                                continue;
-                            } else if current_line.len() == 0 && last_words.len() > 0 {
-                                // As far as I can tell, this only happens when there's a tab stop
-                                // with a word longer than the width of the stop.
-                                // Hmmm...it can also happen when we emit the middle of the line
-                                // when right aligned. This is actually a pretty big problem....
-                                debug_assert!(self.current_tab.is_some());
-                                log::warn!("emitting word longer than tab length");
-                                self.emit_line(last_words, false);
-                                continue;
-                            }
-
-                            if last_words.iter().all(|w| w.is_space()) {
-                                continue;
-                            }
-
-                            let mut last_word = last_words
-                                .pop()
-                                .expect("still need to handle words longer than the line");
-
-                            if self.params.alignment == Alignment::Justify
-                                && self.params.hyphenate
-                                && self.hyphens < self.params.consecutive_hyphens
-                            {
-                                let s = last_word.str();
-                                let hyphenated = self.hyphenation.hyphenate(s);
-                                let breaks = &hyphenated.breaks;
-                                let mut best_spacing = self.justified_space_width(&current_line);
-                                let mut best_start: Option<Word> = None;
-                                let mut best_rest: Option<Word> = None;
-
-                                if breaks.len() > 0 {
-                                    for b in breaks {
-                                        let mut start = s[0..*b].to_string();
-                                        start.push_str("-");
-                                        let start = TextUnit::Str(start);
-                                        let rest = TextUnit::Str(s[*b..].to_string());
-                                        let start = Word::new(
-                                            Arc::new(start),
-                                            &face,
-                                            font_id,
-                                            self.params.pt_size,
-                                            self.params.ligatures,
-                                        );
-                                        let rest = Word::new(
-                                            Arc::new(rest),
-                                            &face,
-                                            font_id,
-                                            self.params.pt_size,
-                                            self.params.ligatures,
-                                        );
-
-                                        current_line.push(start.clone());
-                                        let new_spacing = self.justified_space_width(&current_line);
-                                        if (new_spacing - self.params.space_width).abs()
-                                            < (best_spacing - self.params.space_width).abs()
-                                            && new_spacing >= self.params.min_space_width
-                                        {
-                                            best_spacing = new_spacing;
-                                            best_start = Some(start);
-                                            best_rest = Some(rest);
-                                        }
-
-                                        current_line.pop();
-                                    }
-                                }
-
-                                if let Some(start) = best_start {
-                                    self.hyphens += 1;
-                                    current_line.push(start);
-                                    self.emit_line(current_line, false);
-                                    current_line = vec![];
-                                    if let Some(rest) = best_rest {
-                                        last_word = rest;
-                                    }
-                                } else {
-                                    self.hyphens = 0;
-                                }
-                            } else {
-                                self.hyphens = 0;
-                            }
-
-                            while last_word.is_space() {
-                                last_word = match current_line.pop() {
-                                    Some(w) => w,
-                                    None => return Ok(()),
-                                };
-                            }
-
-                            self.emit_line(current_line, false);
-
-                            self.cursor.x = self.params.col_margin_left;
-                            self.advance_y_cursor(self.params.leading + self.params.pt_size);
-
-                            current_line = vec![last_word];
-                        }
-                    }
-
-                    self.current_line = current_line;
+                    self.handle_text_block(words)?;
                 }
                 StyleBlock::Bold(blocks) => {
                     if self.font.intersects(Font::BOLD) {
@@ -1185,12 +1242,12 @@ impl<'a> LayoutBuilder<'a> {
 
                 StyleBlock::Comm(comm) => self.handle_command(comm)?,
                 StyleBlock::Quote(inner) => {
-                    self.generate_word(literals::OPEN_QUOTE.clone())?;
+                    self.generate_chunk(literals::OPEN_QUOTE.clone())?;
                     self.handle_style_blocks(inner)?;
-                    self.generate_word(literals::CLOSE_QUOTE.clone())?;
+                    self.generate_chunk(literals::CLOSE_QUOTE.clone())?;
                 }
                 StyleBlock::OpenQuote(inner) => {
-                    self.generate_word(literals::OPEN_QUOTE.clone())?;
+                    self.generate_chunk(literals::OPEN_QUOTE.clone())?;
                     self.handle_style_blocks(inner)?;
                 }
             }
@@ -1199,26 +1256,25 @@ impl<'a> LayoutBuilder<'a> {
         Ok(())
     }
 
-    fn pop_words(&self, line: &mut Vec<Word>) -> Vec<Word> {
+    fn pop_chunks(&self, line: &mut Vec<EmitChunk>) -> Vec<EmitChunk> {
         let mut result = vec![];
 
         while let Some(word) = line.pop() {
-            if *word.contents != TextUnit::Space {
-                result.insert(0, word);
-            } else {
-                // Mid-line commands (such as tab stops) can have a space after a word,
-                // so we need to make sure we're not returning an empty result.
-                if result.len() > 0 {
-                    line.push(word);
-                    break;
+            match word {
+                EmitChunk::Space { .. } => {
+                    if result.len() > 0 {
+                        line.push(word);
+                        break;
+                    }
                 }
+                _ => result.insert(0, word),
             }
         }
 
         result
     }
 
-    fn generate_word(&mut self, word: Arc<TextUnit>) -> Result<(), BurroError> {
+    fn generate_chunk(&mut self, word: Arc<TextUnit>) -> Result<(), BurroError> {
         let font_data = self
             .font_data
             .get(&(self.params.font_family.clone(), self.font))
@@ -1234,46 +1290,21 @@ impl<'a> LayoutBuilder<'a> {
             .font_map
             .font_id(&self.params.font_family, self.font.font_num());
 
-        self.current_line.push(Word::new(
+        self.emit_chunks.push(EmitChunk::new(
             word.clone(),
             &face,
             font_id,
             self.params.pt_size,
             self.params.ligatures,
+            self.params.letter_space,
+            self.params.space_width,
         ));
 
         Ok(())
     }
 
-    fn emit_remaining_line(&mut self) {
-        let remaining_line = std::mem::replace(&mut self.current_line, vec![]);
-        self.emit_line(remaining_line, true);
-    }
-
-    fn emit_word(&mut self, word: &Word) {
-        for (ix, glyph) in word.char_infos.iter().enumerate() {
-            let pos = word.char_boxes[ix];
-
-            self.current_page.boxes.push(BurroBox::Glyph {
-                pos: Position {
-                    x: self.cursor.x,
-                    y: self.cursor.y,
-                },
-                id: glyph.glyph_id,
-                font: word.font_id,
-                pts: word.pt_size,
-            });
-
-            self.cursor.x += font_units_to_points(pos.x_advance, word.upem, word.pt_size)
-                + self.params.letter_space;
-            let delta_y = font_units_to_points(pos.y_advance, word.upem, word.pt_size);
-            if delta_y > 0. {
-                self.advance_y_cursor(delta_y);
-            }
-        }
-    }
-
-    fn emit_line(&mut self, line: Vec<Word>, last: bool) {
+    /// Actually print the chunks stored in `line` onto the page.
+    fn finalize_line(&mut self, line: Vec<EmitChunk>, last: bool) {
         if line.len() == 0 {
             return;
         }
@@ -1295,10 +1326,11 @@ impl<'a> LayoutBuilder<'a> {
         let starting_size = line
             .first()
             .expect("should have at least one element in the line")
-            .pt_size;
+            .pt_size();
+
         let max_size = line
             .iter()
-            .map(|w| OrdFloat { val: w.pt_size })
+            .map(|w| OrdFloat { val: w.pt_size() })
             .max()
             .expect("should have at least one element in the line")
             .val;
@@ -1312,28 +1344,7 @@ impl<'a> LayoutBuilder<'a> {
             // so we'll need to rework this to support other scripts.
             Alignment::Left => {
                 for word in line {
-                    match *word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space | TextUnit::NonBreakingSpace => {
-                            self.cursor.x += self.params.space_width
-                        }
-                    }
-                }
-            }
-            Alignment::Justify => {
-                let space_width = self.justified_space_width(&line);
-
-                for word in line {
-                    match *word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space | TextUnit::NonBreakingSpace => {
-                            if last {
-                                self.cursor.x += self.params.space_width;
-                            } else {
-                                self.cursor.x += space_width;
-                            }
-                        }
-                    }
+                    self.emit_chunk(&word, None);
                 }
             }
             Alignment::Right => {
@@ -1342,12 +1353,7 @@ impl<'a> LayoutBuilder<'a> {
                 self.cursor.x = self.params.col_margin_left + available;
 
                 for word in line {
-                    match *word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space | TextUnit::NonBreakingSpace => {
-                            self.cursor.x += self.params.space_width
-                        }
-                    }
+                    self.emit_chunk(&word, None);
                 }
             }
             Alignment::Center => {
@@ -1356,18 +1362,71 @@ impl<'a> LayoutBuilder<'a> {
                 self.cursor.x = self.params.col_margin_left + available / 2.;
 
                 for word in line {
-                    match *word.contents {
-                        TextUnit::Str(_) => self.emit_word(&word),
-                        TextUnit::Space | TextUnit::NonBreakingSpace => {
-                            self.cursor.x += self.params.space_width
-                        }
+                    self.emit_chunk(&word, None);
+                }
+            }
+            Alignment::Justify => {
+                let space_width = self.justified_space_width(&line);
+
+                for word in line {
+                    if last {
+                        self.emit_chunk(&word, None);
+                    } else {
+                        self.emit_chunk(&word, Some(space_width));
                     }
                 }
             }
         }
     }
 
-    fn justified_space_width(&self, line: &[Word]) -> f64 {
+    fn emit_chunk(&mut self, chunk: &EmitChunk, space_width: Option<f64>) {
+        let start_x = self.cursor.x;
+        match chunk {
+            EmitChunk::Word { glyphs, .. } => {
+                for (ix, glyph) in glyphs.iter().enumerate() {
+                    self.cursor.x = start_x + glyph.delta_x;
+                    self.current_page.boxes.push(BurroBox::Glyph {
+                        pos: Position {
+                            x: self.cursor.x,
+                            y: self.cursor.y,
+                        },
+                        id: glyph.glyph_id,
+                        font: glyph.font_id,
+                        pts: glyph.pt_size,
+                    });
+
+                    if glyph.delta_y > 0. {
+                        self.advance_y_cursor(glyph.delta_y);
+                    }
+
+                    if ix == glyphs.len() - 1 {
+                        self.cursor.x += glyph.width;
+                    }
+                }
+            }
+            EmitChunk::Space { width, .. } | EmitChunk::NonBreakingSpace { width, .. } => {
+                if let Some(w) = space_width {
+                    self.cursor.x += w;
+                } else {
+                    self.cursor.x += width;
+                }
+            }
+        }
+    }
+
+    fn create_emit_chunk(&self, word: Arc<TextUnit>, face: &Face, font_id: u32) -> EmitChunk {
+        EmitChunk::new(
+            word.clone(),
+            face,
+            font_id,
+            self.params.pt_size,
+            self.params.ligatures,
+            self.params.letter_space,
+            self.params.space_width,
+        )
+    }
+
+    fn justified_space_width(&self, line: &[EmitChunk]) -> f64 {
         let total_width = self.total_line_width(line);
         let available =
             self.column_width - total_width - (self.cursor.x - self.params.col_margin_left);
@@ -1421,7 +1480,7 @@ impl<'a> LayoutBuilder<'a> {
         }
     }
 
-    fn total_line_width(&self, line: &[Word]) -> f64 {
+    fn total_line_width(&self, line: &[EmitChunk]) -> f64 {
         if line.len() == 0 {
             return 0.;
         }
@@ -1433,17 +1492,6 @@ impl<'a> LayoutBuilder<'a> {
             .sum();
         let mut space_count = line.iter().filter(|w| w.is_space()).count();
 
-        let letter_space = if self.params.letter_space > 0.0 {
-            let letter_count: usize = line
-                .iter()
-                .filter(|w| !w.is_space())
-                .map(|w| w.str().len())
-                .sum();
-            (letter_count as f64) * self.params.letter_space
-        } else {
-            0.0
-        };
-
         if line
             .last()
             .expect("should have at least one element in the line")
@@ -1451,8 +1499,9 @@ impl<'a> LayoutBuilder<'a> {
         {
             space_count -= 1;
         }
+
         let space_width = self.params.space_width * space_count as f64;
-        word_width + space_width + letter_space
+        word_width + space_width
     }
 }
 

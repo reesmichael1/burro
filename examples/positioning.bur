@@ -13,9 +13,11 @@ In this paragraph, .hspace[4P] we've added four picas of horizontal space here i
 \..\.it can be used to reset the cursor after adding vertical space!
 
 You can also go backwards along the line with a negative argument to \.hspace:
-.vspace[1P]
+.vspace[14pt]
 .hspace[-8P]
 Now we're back to the left!
+
+Here is an example of using .spread the spread command.
 
 .vspace[7P]
 and this line should be at the bottom (even though they're reversed in the document).
